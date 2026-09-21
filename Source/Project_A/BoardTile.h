@@ -30,12 +30,19 @@ public:
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Tile")
     UStaticMeshComponent* TileMesh;
 
-	//타일의 위치를 나타내는 그리드 좌표
+    //보기 쉬운 보드 배열 좌표
     UPROPERTY(EditInstanceOnly, BlueprintReadWrite, Category = "Tile")
-    int32 GridX = 0;
+    int32 Row = 0;
 
     UPROPERTY(EditInstanceOnly, BlueprintReadWrite, Category = "Tile")
-    int32 GridY = 0;
+    int32 Column = 0;
+
+	//육각형 좌표계에서의 좌표
+    UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Tile")
+    int32 HexQ = 0;
+
+    UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Tile")
+    int32 HexR = 0;
 
 	//타일의 팀 타입을 나타냄
     UPROPERTY(EditInstanceOnly, BlueprintReadWrite, Category = "Tile")
@@ -48,6 +55,7 @@ public:
 	//타일에 올라가 있는 유닛 포인터값
     UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Tile")
     AActor* OccupiedUnit = nullptr;
+
 
 	//타일에 유닛 배치 가능 여부를 반환
     UFUNCTION(BlueprintCallable, Category = "Tile")
