@@ -1,90 +1,85 @@
 #pragma once
-
 #include "CoreMinimal.h"
 #include "GameFramework/Character.h"
 #include "BattleUnitBase.generated.h"
 
+class ABoardTile;
+class UStaticMeshComponent;
+class ABattleUnitBase;
+
 UENUM(BlueprintType)
 enum class EBattleTeam : uint8
 {
-    Player UMETA(DisplayName = "Player"),
-    Enemy  UMETA(DisplayName = "Enemy")
+    Player = 0 UMETA(DisplayName = "Player"),
+    Enemy = 1 UMETA(DisplayName = "Enemy")
 };
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FBattleUnitEvent, ABattleUnitBase*, Unit);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FBattleUnitAttackEvent, ABattleUnitBase*, Attacker, ABattleUnitBase*, Target);
 
 UCLASS()
 class PROJECT_A_API ABattleUnitBase : public ACharacter
 {
     GENERATED_BODY()
-
 public:
     ABattleUnitBase();
-
+    virtual void Tick(float DeltaSeconds) override;
+    virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 protected:
     virtual void BeginPlay() override;
-
 public:
-
-    // 팀 구분
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Unit")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Unit")
     EBattleTeam TeamType = EBattleTeam::Player;
-
-    // 최대 체력
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Stats")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Stats", meta=(ClampMin="1"))
     float MaxHP = 100.0f;
-
-    // 현재 체력
-    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Stats")
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stats")
     float CurrentHP = 100.0f;
-
-    // 최대 마나
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Stats")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Stats", meta=(ClampMin="0"))
     float MaxMP = 100.0f;
-
-    // 현재 마나
-    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Stats")
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Stats")
     float CurrentMP = 0.0f;
-
-    // 공격력
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Stats")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Stats", meta=(ClampMin="0"))
     float AttackDamage = 10.0f;
-
-    // 방어력
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Stats")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Stats", meta=(ClampMin="0"))
     float Armor = 0.0f;
-
-    // 공격 속도 (초당 공격 횟수)
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Stats")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Stats", meta=(ClampMin="0.01"))
     float AttackSpeed = 1.0f;
-
-    // 공격 사거리
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Stats")
+    // Distance between capsule surfaces, not between their centers.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Stats", meta=(ClampMin="0"))
     float AttackRange = 150.0f;
-
-    // 현재 공격 대상
-    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Stats", meta=(ClampMin="0"))
+    float MovementSpeed = 600.0f;
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Combat")
     ABattleUnitBase* CurrentTarget = nullptr;
-
-    // 사망 여부
-    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat")
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Combat")
     bool bIsDead = false;
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Combat")
+    bool bInCombat = false;
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Board")
+    bool bIsDeployed = false;
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Board")
+    TObjectPtr<ABoardTile> CurrentTile = nullptr;
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Unit|Visual")
+    TObjectPtr<UStaticMeshComponent> PlaceholderMesh;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Unit|Visual")
+    bool bUsePlaceholderMesh = true;
+    UPROPERTY(BlueprintAssignable, Category="Combat")
+    FBattleUnitEvent OnHealthChanged;
+    UPROPERTY(BlueprintAssignable, Category="Combat")
+    FBattleUnitEvent OnUnitDied;
+    UPROPERTY(BlueprintAssignable, Category="Combat")
+    FBattleUnitAttackEvent OnAttack;
 
-    // 피해
-    UFUNCTION(BlueprintCallable, Category = "Combat")
-    void ReceiveDamage(float DamageAmount);
-
-    // 회복
-    UFUNCTION(BlueprintCallable, Category = "Combat")
-    void Heal(float HealAmount);
-
-    // 마나 획득
-    UFUNCTION(BlueprintCallable, Category = "Combat")
-    void AddMana(float ManaAmount);
-
-    // 사망
-    UFUNCTION(BlueprintCallable, Category = "Combat")
-    void Die();
-
-    // 생존 여부
-    UFUNCTION(BlueprintPure, Category = "Combat")
-    bool IsAlive() const;
+    UFUNCTION(BlueprintCallable, Category="Combat") void ReceiveDamage(float DamageAmount);
+    UFUNCTION(BlueprintCallable, Category="Combat") void Heal(float HealAmount);
+    UFUNCTION(BlueprintCallable, Category="Combat") void AddMana(float ManaAmount);
+    UFUNCTION(BlueprintCallable, Category="Combat") void Die();
+    UFUNCTION(BlueprintPure, Category="Combat") bool IsAlive() const;
+    UFUNCTION(BlueprintCallable, Category="Combat") void StartCombat();
+    UFUNCTION(BlueprintCallable, Category="Combat") void StopCombat();
+    UFUNCTION(BlueprintCallable, Category="Board") bool PlaceOnTile(ABoardTile* Tile);
+private:
+    float AttackCooldown = 0.0f;
+    float TargetRefreshTime = 0.0f;
+    void FindTarget();
 };

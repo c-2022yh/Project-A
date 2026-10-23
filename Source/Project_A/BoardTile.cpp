@@ -1,40 +1,42 @@
 #include "BoardTile.h"
+#include "BattleUnitBase.h"
 #include "Components/StaticMeshComponent.h"
 
-//생성자에서 타일의 메쉬 컴포넌트를 초기화하고 충돌 설정을 적용    
 ABoardTile::ABoardTile()
 {
     PrimaryActorTick.bCanEverTick = false;
-
     TileMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("TileMesh"));
     RootComponent = TileMesh;
-
     TileMesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+    TileMesh->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
 }
-
-void ABoardTile::BeginPlay()
+void ABoardTile::BeginPlay() { Super::BeginPlay(); }
+bool ABoardTile::CanPlaceUnit() const { return !IsValid(OccupiedUnit); }
+FVector ABoardTile::GetSurfaceLocation() const
 {
-    Super::BeginPlay();
+    FVector Location = GetActorLocation();
+    if (IsValid(TileMesh) && TileMesh->GetStaticMesh())
+    {
+        const FBoxSphereBounds Bounds = TileMesh->CalcBounds(TileMesh->GetComponentTransform());
+        Location.Z = Bounds.Origin.Z + Bounds.BoxExtent.Z;
+    }
+    return Location;
 }
-
-bool ABoardTile::CanPlaceUnit() const
-{
-    return !bOccupied;
-}
-
 void ABoardTile::SetOccupiedUnit(AActor* Unit)
 {
-    if (Unit == nullptr)
+    if (!IsValid(Unit) || (IsValid(OccupiedUnit) && OccupiedUnit != Unit)) return;
+    if (ABattleUnitBase* BattleUnit = Cast<ABattleUnitBase>(Unit))
     {
-        return;
+        if (IsValid(BattleUnit->CurrentTile) && BattleUnit->CurrentTile != this) BattleUnit->CurrentTile->ClearTile();
+        BattleUnit->CurrentTile = this;
     }
-
     OccupiedUnit = Unit;
     bOccupied = true;
 }
-
 void ABoardTile::ClearTile()
 {
+    if (ABattleUnitBase* Unit = Cast<ABattleUnitBase>(OccupiedUnit))
+        if (Unit->CurrentTile == this) Unit->CurrentTile = nullptr;
     OccupiedUnit = nullptr;
     bOccupied = false;
 }

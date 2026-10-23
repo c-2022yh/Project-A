@@ -61,6 +61,9 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Tile")
     bool CanPlaceUnit() const;
 
+    UFUNCTION(BlueprintPure, Category = "Tile")
+    FVector GetSurfaceLocation() const;
+
 	//타일에 유닛 배치
     UFUNCTION(BlueprintCallable, Category = "Tile")
     void SetOccupiedUnit(AActor* Unit);
