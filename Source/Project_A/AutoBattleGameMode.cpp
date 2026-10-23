@@ -101,8 +101,10 @@ void AAutoBattleGameMode::InitializeEncounter()
     const FVector NearSurface = PlayerTiles[0]->GetSurfaceLocation();
     const FBoxSphereBounds NearBounds = PlayerTiles[0]->TileMesh->CalcBounds(PlayerTiles[0]->TileMesh->GetComponentTransform());
     const float BenchSpacing = FMath::Max(300.0f, BoardManager->EffectiveHorizontalSpacing * 0.65f);
+    // Keep the waiting line just inside the near edge so it fits the board camera.
+    // These units remain undeployed until the player places them on a tile.
     const FVector BenchCenter(BoardManager->GetActorLocation().X,
-        NearBounds.Origin.Y - NearBounds.BoxExtent.Y - 240.0f, NearSurface.Z);
+        NearBounds.Origin.Y - NearBounds.BoxExtent.Y + 120.0f, NearSurface.Z);
     int32 WaitingIndex = 0;
     for (const FUnitSpawnInfo& Info : UnitRoster)
     {

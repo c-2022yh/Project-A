@@ -13,7 +13,7 @@ void AAutoBattleHUD::DrawHUD()
     const AAutoBattleGameMode* Mode = Cast<AAutoBattleGameMode>(UGameplayStatics::GetGameMode(this));
     if (!Mode) return;
     const float Width = Canvas->ClipX;
-    DrawRect(FLinearColor(0.01f, 0.02f, 0.04f, 0.85f), 0, 0, Width, 100);
+    DrawRect(FLinearColor(0.01f, 0.02f, 0.04f, 0.85f), 0, 0, Width, 72);
     FString Title;
     switch (Mode->CurrentPhase)
     {
@@ -27,9 +27,9 @@ void AAutoBattleHUD::DrawHUD()
         case EGamePhase::GameOver: Title = TEXT("DEFEAT"); break;
         default: Title = TEXT("ROUND CLEAR"); break;
     }
-    DrawText(Title, FLinearColor::White, 20, 14, nullptr, 1.4f);
-    DrawText(Mode->StatusMessage, FLinearColor(0.8f, 0.85f, 0.95f), 20, 48, nullptr, 0.85f);
-    DrawText(TEXT("LMB: select/place   RMB: cancel   Enter: start   R: restart"), FLinearColor::White, 20, 74, nullptr, 0.8f);
+    DrawText(Title, FLinearColor::White, 14, 8, nullptr, 1.1f);
+    DrawText(Mode->StatusMessage, FLinearColor(0.8f, 0.85f, 0.95f), 14, 31, nullptr, 0.7f);
+    DrawText(TEXT("LMB: select/place   RMB: cancel   Enter: start   R: restart"), FLinearColor::White, 14, 51, nullptr, 0.7f);
     const bool CanStart = Mode->bEncounterReady && (Mode->CurrentPhase == EGamePhase::Preparation || Mode->CurrentPhase == EGamePhase::RoundClear);
     const float ButtonY = FMath::Max(110.0f, Canvas->ClipY - 52.0f);
     if (CanStart)
@@ -46,9 +46,13 @@ void AAutoBattleHUD::DrawHUD()
     for (ABattleUnitBase* Unit : Mode->BattleUnits)
     {
         if (!IsValid(Unit) || !Unit->IsAlive()) continue;
-        FVector2D Screen;
         const FVector Anchor = Unit->GetActorLocation() + FVector(0, 0, Unit->GetCapsuleComponent()->GetScaledCapsuleHalfHeight() + 45);
-        if (!PlayerOwner->ProjectWorldLocationToScreen(Anchor, Screen)) continue;
+        // Canvas coordinates exclude the camera's letterbox/pillarbox offset.
+        // Project through the same scene view used to draw this HUD.
+        const FVector Projected = Canvas->Project(Anchor);
+        if (Projected.Z <= 0 || Projected.X < 0 || Projected.X > Canvas->ClipX
+            || Projected.Y < 0 || Projected.Y > Canvas->ClipY) continue;
+        const FVector2D Screen(Projected.X, Projected.Y);
         const FLinearColor Color = Unit->TeamType == EBattleTeam::Player ? FLinearColor(0.1f, 0.55f, 1) : FLinearColor(1, 0.2f, 0.15f);
         DrawRect(FLinearColor::Black, Screen.X - 31, Screen.Y, 62, 9);
         DrawRect(Color, Screen.X - 30, Screen.Y + 1, 60 * FMath::Clamp(Unit->CurrentHP / FMath::Max(1.0f, Unit->MaxHP), 0.0f, 1.0f), 7);
