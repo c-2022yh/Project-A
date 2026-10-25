@@ -44,7 +44,7 @@ public:
     float Armor = 0.0f;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Stats", meta=(ClampMin="0.01"))
     float AttackSpeed = 1.0f;
-    // Distance between capsule surfaces, not between their centers.
+    // 공격 사거리는 유닛 중심이 아닌 두 캡슐 표면 사이의 거리로 계산한다.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Stats", meta=(ClampMin="0"))
     float AttackRange = 150.0f;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Stats", meta=(ClampMin="0"))

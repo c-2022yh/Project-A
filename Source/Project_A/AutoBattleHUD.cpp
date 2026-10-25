@@ -47,8 +47,8 @@ void AAutoBattleHUD::DrawHUD()
     {
         if (!IsValid(Unit) || !Unit->IsAlive()) continue;
         const FVector Anchor = Unit->GetActorLocation() + FVector(0, 0, Unit->GetCapsuleComponent()->GetScaledCapsuleHalfHeight() + 45);
-        // Canvas coordinates exclude the camera's letterbox/pillarbox offset.
-        // Project through the same scene view used to draw this HUD.
+        // Canvas 좌표에는 카메라 화면 바깥 검은 여백의 위치 보정이 포함되지 않는다.
+        // 이 HUD를 그릴 때 사용하는 시점으로 월드 위치를 화면 좌표로 변환한다.
         const FVector Projected = Canvas->Project(Anchor);
         if (Projected.Z <= 0 || Projected.X < 0 || Projected.X > Canvas->ClipX
             || Projected.Y < 0 || Projected.Y > Canvas->ClipY) continue;

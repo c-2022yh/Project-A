@@ -19,7 +19,7 @@ public:
     ABattleUnitBase* SelectedUnit = nullptr;
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Selection")
     ABoardTile* HoveredTile = nullptr;
-    // Uses a tagged CameraActor first, then the first CameraActor in the level.
+    // 지정 태그가 있는 CameraActor를 우선 사용하고, 없으면 레벨에서 처음 찾은 CameraActor를 사용한다.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Camera")
     FName BattleCameraTag = TEXT("BattleCamera");
     UFUNCTION(BlueprintCallable, Category="Selection") void SelectUnit(ABattleUnitBase* Unit);

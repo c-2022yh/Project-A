@@ -42,7 +42,7 @@ void AAutoBattlePlayerController::SetupInputComponent()
 void AAutoBattlePlayerController::SelectUnit(ABattleUnitBase* Unit)
 {
     const AAutoBattleGameMode* Mode = Cast<AAutoBattleGameMode>(UGameplayStatics::GetGameMode(this));
-    if (!Mode || Mode->CurrentPhase != EGamePhase::Preparation || !IsValid(Unit)
+    if (!Mode || Mode->CurrentPhase != EGamePhase::Preparation || !Mode->bPreparationActive || !IsValid(Unit)
         || !Mode->BattleUnits.Contains(Unit) || Unit->TeamType != EBattleTeam::Player || !Unit->IsAlive())
     { ClearSelection(); return; }
     SelectedUnit = Unit;
@@ -51,7 +51,7 @@ void AAutoBattlePlayerController::ClearSelection() { SelectedUnit = nullptr; }
 bool AAutoBattlePlayerController::PlaceSelectedUnitOnTile(ABoardTile* Tile)
 {
     AAutoBattleGameMode* Mode = Cast<AAutoBattleGameMode>(UGameplayStatics::GetGameMode(this));
-    if (!Mode || Mode->CurrentPhase != EGamePhase::Preparation || !Mode->bEncounterReady
+    if (!Mode || Mode->CurrentPhase != EGamePhase::Preparation || !Mode->bPreparationActive || !Mode->bEncounterReady
         || !IsValid(SelectedUnit) || !IsValid(Tile) || SelectedUnit->TeamType != EBattleTeam::Player) return false;
     if (!SelectedUnit->bIsDeployed && Mode->GetDeployedPlayerCount() >= Mode->MaxBoardUnits)
     { Mode->StatusMessage = TEXT("Deployment limit reached. Move an existing unit instead."); return false; }
@@ -65,7 +65,7 @@ void AAutoBattlePlayerController::HandlePrimaryClick()
 {
     float X, Y;
     if (GetMousePosition(X, Y) && GetHUD() && GetHUD()->GetHitBoxAtCoordinates(FVector2D(X, Y), true)) return;
-    // Imported hex meshes may have triangle collision but no simple collision shapes.
+    // 가져온 육각형 메시에는 단순 충돌 도형 없이 삼각형 기반 충돌만 있을 수 있다.
     FHitResult Hit;
     if (!GetHitResultUnderCursor(ECC_Visibility, true, Hit))
     {
@@ -105,11 +105,10 @@ void AAutoBattlePlayerController::RequestStartCombat()
 {
     if (AAutoBattleGameMode* Mode = Cast<AAutoBattleGameMode>(UGameplayStatics::GetGameMode(this)))
     {
-        if (Mode->CurrentPhase == EGamePhase::RoundClear) Mode->AdvanceRound();
-        else Mode->StartCombatPhase();
+        Mode->RequestCombatStart();
     }
 }
 void AAutoBattlePlayerController::RequestRestart()
 {
-    if (AAutoBattleGameMode* Mode = Cast<AAutoBattleGameMode>(UGameplayStatics::GetGameMode(this))) Mode->RestartBattle();
+    if (AAutoBattleGameMode* Mode = Cast<AAutoBattleGameMode>(UGameplayStatics::GetGameMode(this))) Mode->RequestBattleRestart();
 }

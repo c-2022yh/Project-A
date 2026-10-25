@@ -39,13 +39,13 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Board")
     int32 Columns = 5;
 
-    // Rows start at negative world Y (the current camera side).
-    // Values outside the board size are clamped during generation.
+    // 행은 월드 Y의 음수 방향, 즉 현재 카메라 쪽부터 시작한다.
+    // 설정값이 보드 크기를 벗어나면 생성 시 유효한 범위로 제한한다.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Board|Teams",
         meta = (ClampMin = "0", ToolTip = "Number of player rows from the negative world Y side. Remaining rows belong to the enemy."))
     int32 PlayerRows = 3;
 
-    // Leaving a material unset preserves the tile Blueprint's material.
+    // 머티리얼을 지정하지 않으면 타일 BP에 설정된 머티리얼을 유지한다.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Board|Teams",
         meta = (ToolTip = "Player tile material for mesh slot 0. Leave unset to keep the tile Blueprint material."))
     TObjectPtr<UMaterialInterface> PlayerTileMaterial = nullptr;
@@ -55,16 +55,16 @@ public:
     TObjectPtr<UMaterialInterface> EnemyTileMaterial = nullptr;
 
     //육각 타일의 가로 간격
-    // Automatic spacing assumes the current point-up hex layout (90 degree tile yaw).
+    // 자동 간격 계산은 현재의 꼭짓점이 위를 향하는 육각형 배치(타일 Yaw 90도)를 기준으로 한다.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Board|Spacing")
     bool bAutoCalculateSpacing = true;
 
-    // 0 = touching tiles, 0.02 = 2 percent spacing.
+    // 0이면 타일이 맞닿고, 0.02이면 타일 크기의 2%만큼 간격을 둔다.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Board|Spacing",
         meta = (ClampMin = "0.0", UIMax = "0.2", EditCondition = "bAutoCalculateSpacing"))
     float GapRatio = 0.02f;
 
-    // Manual values are preserved while automatic spacing is enabled.
+    // 자동 간격 계산을 사용해도 수동 간격 설정값은 보존한다.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Board|Spacing",
         meta = (ClampMin = "0.01", EditCondition = "!bAutoCalculateSpacing"))
     float HorizontalSpacing = 173.2f;

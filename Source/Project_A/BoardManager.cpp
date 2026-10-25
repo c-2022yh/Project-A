@@ -29,7 +29,7 @@ void ABoardManager::GenerateBoard()
         return;
     }
 
-    // Rebuilding must remove actors as well as their array entries.
+    // 보드를 다시 생성할 때 배열뿐 아니라 기존 타일 액터도 제거한다.
     for (ABoardTile* Tile : Tiles)
     {
         if (IsValid(Tile))
@@ -45,8 +45,8 @@ void ABoardManager::GenerateBoard()
     SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
     const FRotator TileRotation(0.0f, 90.0f, 0.0f);
 
-    // Use a real tile so Blueprint construction and mesh scale are included.
-    // Reuse this actor as the first board tile rather than spawning a disposable probe.
+    // BP 생성 시 설정과 메시 스케일까지 반영하려고 실제 타일을 생성하여 크기를 측정한다.
+    // 측정에 사용한 액터는 첫 번째 보드 타일로 재사용한다.
     ABoardTile* FirstTile = World->SpawnActor<ABoardTile>(
         TileClass, GetActorLocation(), TileRotation, SpawnParams);
     if (!FirstTile)
@@ -83,7 +83,7 @@ void ABoardManager::GenerateBoard()
     EffectiveHorizontalSpacing = SpacingX;
     EffectiveVerticalSpacing = SpacingY;
 
-    // Include the staggered row's extra half-column when centering the board.
+    // 보드를 중앙에 맞출 때 엇갈린 행이 가로로 반 칸 더 차지하는 폭도 포함한다.
     const float StaggerWidth = Rows > 1 ? SpacingX * 0.5f : 0.0f;
     const float BoardWidth = (Columns - 1) * SpacingX + StaggerWidth;
     const float BoardHeight = (Rows - 1) * SpacingY;

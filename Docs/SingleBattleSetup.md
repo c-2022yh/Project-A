@@ -83,7 +83,7 @@ Attack Speed는 초당 공격 횟수이고, Attack Range는 두 캡슐 표면 �
 - 상태/타이머: CurrentPhase, RemainingPreparationTime, ElapsedCombatTime, StatusMessage.
 - 상태 변경 알림: OnPhaseChanged.
 - 배치 수: GetDeployedPlayerCount / MaxBoardUnits.
-- 버튼: StartCombatPhase, RestartBattle, AdvanceRound.
+- 버튼 요청: RequestCombatStart, RequestBattleRestart. BP 흐름 그래프 연결은 BlueprintGameFlow.md 참고.
 - 체력바: 유닛 CurrentHP / MaxHP 및 OnHealthChanged.
 - 공격/사망 연출: OnAttack / OnUnitDied.
 - 보드 조회: GetTile, GetPlayerTiles, GetEnemyTiles, OnBoardGenerated.

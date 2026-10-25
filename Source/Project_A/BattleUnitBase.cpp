@@ -112,7 +112,7 @@ void ABattleUnitBase::Tick(float DeltaSeconds)
     }
     else
     {
-        // Flat-arena steering. Obstacles require a future navigation implementation.
+        // 평평한 전장에서 목표를 향해 이동한다. 장애물 우회는 추후 별도의 경로 탐색 구현이 필요하다.
         FVector Steering = Direction.GetSafeNormal();
         const AAutoBattleGameMode* Mode = Cast<AAutoBattleGameMode>(UGameplayStatics::GetGameMode(this));
         if (Mode)
