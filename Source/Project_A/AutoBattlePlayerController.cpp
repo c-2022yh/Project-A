@@ -65,13 +65,25 @@ void AAutoBattlePlayerController::HandlePrimaryClick()
 {
     float X, Y;
     if (GetMousePosition(X, Y) && GetHUD() && GetHUD()->GetHitBoxAtCoordinates(FVector2D(X, Y), true)) return;
+    // Imported hex meshes may have triangle collision but no simple collision shapes.
     FHitResult Hit;
-    if (!GetHitResultUnderCursor(ECC_Visibility, false, Hit)) return;
+    if (!GetHitResultUnderCursor(ECC_Visibility, true, Hit))
+    {
+        if (IsValid(SelectedUnit))
+            if (AAutoBattleGameMode* Mode = Cast<AAutoBattleGameMode>(UGameplayStatics::GetGameMode(this)))
+                Mode->StatusMessage = TEXT("No tile hit. Click an empty player tile near the camera.");
+        return;
+    }
     if (ABattleUnitBase* Unit = Cast<ABattleUnitBase>(Hit.GetActor())) SelectUnit(Unit);
     else if (ABoardTile* Tile = Cast<ABoardTile>(Hit.GetActor()))
     {
         if (IsValid(SelectedUnit)) PlaceSelectedUnitOnTile(Tile);
         else if (ABattleUnitBase* Occupant = Cast<ABattleUnitBase>(Tile->OccupiedUnit)) SelectUnit(Occupant);
+    }
+    else if (IsValid(SelectedUnit))
+    {
+        if (AAutoBattleGameMode* Mode = Cast<AAutoBattleGameMode>(UGameplayStatics::GetGameMode(this)))
+            Mode->StatusMessage = TEXT("Click an empty player tile near the camera, not the ground.");
     }
 }
 void AAutoBattlePlayerController::PlayerTick(float DeltaSeconds)
@@ -81,7 +93,7 @@ void AAutoBattlePlayerController::PlayerTick(float DeltaSeconds)
     HoveredTile = nullptr;
     if (!Mode || Mode->CurrentPhase != EGamePhase::Preparation) { ClearSelection(); return; }
     FHitResult Hit;
-    if (GetHitResultUnderCursor(ECC_Visibility, false, Hit)) HoveredTile = Cast<ABoardTile>(Hit.GetActor());
+    if (GetHitResultUnderCursor(ECC_Visibility, true, Hit)) HoveredTile = Cast<ABoardTile>(Hit.GetActor());
     if (IsValid(SelectedUnit) && SelectedUnit->IsAlive())
     {
         DrawDebugCircle(GetWorld(), SelectedUnit->GetActorLocation(),
