@@ -14,17 +14,6 @@ AAutoBattleGameMode::AAutoBattleGameMode()
     PlayerControllerClass = AAutoBattlePlayerController::StaticClass();
     HUDClass = AAutoBattleHUD::StaticClass();
     DefaultPawnClass = nullptr;
-    for (int32 Index = 0; Index < 3; ++Index)
-    {
-        FUnitSpawnInfo Player;
-        UnitRoster.Add(Player);
-        FUnitSpawnInfo Enemy;
-        Enemy.Team = EBattleTeam::Enemy;
-        Enemy.bStartOnBoard = true;
-        Enemy.Row = 4;
-        Enemy.Column = Index + 1;
-        UnitRoster.Add(Enemy);
-    }
 }
 void AAutoBattleGameMode::BeginPlay()
 {
@@ -79,91 +68,6 @@ void AAutoBattleGameMode::InitializeEncounter()
 
     StatusMessage = TEXT("Board ready. Spawn units and start preparation in the GameMode graph.");
     ReceiveBoardReady();
-}
-
-bool AAutoBattleGameMode::SpawnEncounterUnits()
-{
-    if (!IsValid(BoardManager) || CurrentPhase != EGamePhase::Preparation || bEncounterReady || bEncounterSetupOpen || !BattleUnits.IsEmpty())
-    {
-        StatusMessage = TEXT("Setup: spawn units once after Board Ready, before preparation.");
-        return false;
-    }
-    const TArray<ABoardTile*> PlayerTiles = BoardManager->GetPlayerTiles();
-    if (PlayerTiles.IsEmpty() || BoardManager->GetEnemyTiles().IsEmpty())
-    {
-        StatusMessage = TEXT("Setup: both player and enemy tile areas are required.");
-        return false;
-    }
-    // 유닛을 생성하기 전에 전체 생성 목록의 설정이 올바른지 검사한다.
-    TSet<ABoardTile*> Reserved;
-    int32 Players = 0, Enemies = 0, DeployedPlayers = 0;
-    for (const FUnitSpawnInfo& Info : UnitRoster)
-    {
-        if (Info.Team == EBattleTeam::Player) ++Players; else ++Enemies;
-        if (Info.Team == EBattleTeam::Enemy && !Info.bStartOnBoard)
-        {
-            StatusMessage = TEXT("Setup: every enemy must have Start On Board enabled.");
-            return false;
-        }
-        if (!Info.bStartOnBoard) continue;
-        ABoardTile* Tile = BoardManager->GetTile(Info.Row, Info.Column);
-        const EBoardTileTeam Required = Info.Team == EBattleTeam::Player ? EBoardTileTeam::Player : EBoardTileTeam::Enemy;
-        if (!Tile || Tile->TeamType != Required || !Tile->CanPlaceUnit() || Reserved.Contains(Tile))
-        {
-            StatusMessage = FString::Printf(TEXT("Setup: invalid, occupied or wrong-team tile (%d, %d)."), Info.Row, Info.Column);
-            return false;
-        }
-        Reserved.Add(Tile);
-        if (Info.Team == EBattleTeam::Player) ++DeployedPlayers;
-    }
-    if (Players == 0 || Enemies == 0 || DeployedPlayers > MaxBoardUnits)
-    {
-        StatusMessage = TEXT("Setup: need both teams and a valid player deployment limit.");
-        return false;
-    }
-    if (!BeginEncounterSetup()) return false;
-    int32 WaitingCount = 0;
-    for (const FUnitSpawnInfo& Info : UnitRoster) if (!Info.bStartOnBoard) ++WaitingCount;
-    int32 WaitingIndex = 0;
-    for (const FUnitSpawnInfo& Info : UnitRoster)
-    {
-        UClass* Class = Info.UnitClass ? Info.UnitClass.Get() : ABattleUnitBase::StaticClass();
-        FActorSpawnParameters Params;
-        Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-        ABattleUnitBase* Unit = GetWorld()->SpawnActor<ABattleUnitBase>(Class, BoardManager->GetActorLocation(), FRotator::ZeroRotator, Params);
-        if (!Unit)
-        {
-            CancelEncounterSetup();
-            StatusMessage = TEXT("Setup: failed to spawn a roster unit.");
-            return false;
-        }
-        Unit->TeamType = Info.Team;
-        if (!RegisterBattleUnit(Unit))
-        {
-            Unit->Destroy();
-            const FString Error = StatusMessage;
-            CancelEncounterSetup();
-            StatusMessage = Error;
-            return false;
-        }
-        const bool bPlaced = Info.bStartOnBoard
-            ? Unit->PlaceOnTile(BoardManager->GetTile(Info.Row, Info.Column))
-            : MoveUnitToWaitingArea(Unit, WaitingIndex++, WaitingCount);
-        if (!bPlaced)
-        {
-            CancelEncounterSetup();
-            StatusMessage = TEXT("Setup: could not position a roster unit.");
-            return false;
-        }
-    }
-    if (!CompleteEncounterSetup())
-    {
-        const FString Error = StatusMessage;
-        CancelEncounterSetup();
-        StatusMessage = Error;
-        return false;
-    }
-    return true;
 }
 
 bool AAutoBattleGameMode::BeginEncounterSetup()
@@ -321,33 +225,6 @@ void AAutoBattleGameMode::RequestCombatStart()
 void AAutoBattleGameMode::RequestBattleRestart()
 {
     ReceiveRestartRequested();
-}
-void AAutoBattleGameMode::ReceiveBoardReady_Implementation()
-{
-    if (SpawnEncounterUnits()) StartPreparationPhase();
-}
-void AAutoBattleGameMode::ReceivePreparationExpired_Implementation()
-{
-    RequestCombatStart();
-}
-void AAutoBattleGameMode::ReceiveCombatStartRequested_Implementation()
-{
-    if (CurrentPhase == EGamePhase::RoundClear) AdvanceRound();
-    else StartCombatPhase();
-}
-void AAutoBattleGameMode::ReceiveRestartRequested_Implementation()
-{
-    RestartBattle();
-}
-void AAutoBattleGameMode::ReceiveBattleResultDetected_Implementation(EGamePhase Result)
-{
-    switch (Result)
-    {
-        case EGamePhase::Victory: HandleVictory(); break;
-        case EGamePhase::RoundClear: HandleRoundClear(); break;
-        case EGamePhase::GameOver: HandleGameOver(); break;
-        default: break;
-    }
 }
 void AAutoBattleGameMode::ReportBattleResult(EGamePhase Result)
 {

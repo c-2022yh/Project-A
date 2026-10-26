@@ -19,7 +19,7 @@ USTRUCT(BlueprintType)
 struct FUnitSpawnInfo
 {
     GENERATED_BODY()
-    // C++ 생성 경로에서는 클래스를 비워 두면 기본 큐브 테스트 유닛을 사용한다.
+    // BP의 Spawn Actor에서 사용할 클래스. 생성하려면 반드시 지정해야 한다.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Spawn")
     TSubclassOf<ABattleUnitBase> UnitClass;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Spawn")
@@ -82,8 +82,6 @@ public:
     UPROPERTY(BlueprintAssignable, Category="Game")
     FGamePhaseChangedEvent OnPhaseChanged;
 
-    // 기본 생성 흐름: Board Ready -> Spawn Encounter Units -> 성공 여부 분기 -> Start Preparation Phase.
-    UFUNCTION(BlueprintCallable, Category="Game|Flow") bool SpawnEncounterUnits();
 
     // 유닛 생성 반복은 BP에서 구성하고, 아래 함수들은 등록과 배치 등 공통 상태를 관리한다.
     UFUNCTION(BlueprintCallable, Category="Game|Unit Setup") bool BeginEncounterSetup();
@@ -108,26 +106,21 @@ public:
     UFUNCTION(BlueprintPure, Category="Game") int32 GetAliveTeamCount(EBattleTeam Team) const;
 protected:
     // GameMode BP에서 아래 이벤트를 구현하여 단계별 게임 진행을 연결한다.
-    // BP에서 구현하지 않은 이벤트는 C++의 기본 동작을 사용한다.
-    UFUNCTION(BlueprintNativeEvent, Category="Game|Flow", meta=(DisplayName="Board Ready"))
+    // C++ 기본 진행은 없다. BP에서 필요한 이벤트를 연결해야 다음 단계로 진행한다.
+    UFUNCTION(BlueprintImplementableEvent, Category="Game|Flow", meta=(DisplayName="Board Ready"))
     void ReceiveBoardReady();
-    virtual void ReceiveBoardReady_Implementation();
 
-    UFUNCTION(BlueprintNativeEvent, Category="Game|Flow", meta=(DisplayName="Preparation Expired"))
+    UFUNCTION(BlueprintImplementableEvent, Category="Game|Flow", meta=(DisplayName="Preparation Expired"))
     void ReceivePreparationExpired();
-    virtual void ReceivePreparationExpired_Implementation();
 
-    UFUNCTION(BlueprintNativeEvent, Category="Game|Flow", meta=(DisplayName="Combat Start Requested"))
+    UFUNCTION(BlueprintImplementableEvent, Category="Game|Flow", meta=(DisplayName="Combat Start Requested"))
     void ReceiveCombatStartRequested();
-    virtual void ReceiveCombatStartRequested_Implementation();
 
-    UFUNCTION(BlueprintNativeEvent, Category="Game|Flow", meta=(DisplayName="Battle Result Detected"))
+    UFUNCTION(BlueprintImplementableEvent, Category="Game|Flow", meta=(DisplayName="Battle Result Detected"))
     void ReceiveBattleResultDetected(EGamePhase Result);
-    virtual void ReceiveBattleResultDetected_Implementation(EGamePhase Result);
 
-    UFUNCTION(BlueprintNativeEvent, Category="Game|Flow", meta=(DisplayName="Restart Requested"))
+    UFUNCTION(BlueprintImplementableEvent, Category="Game|Flow", meta=(DisplayName="Restart Requested"))
     void ReceiveRestartRequested();
-    virtual void ReceiveRestartRequested_Implementation();
 
     // 단계 변경에 맞춰 위젯 생성과 표시 등을 연결하는 선택적 이벤트다. 여기서 게임 단계를 전환하지 않는다.
     UFUNCTION(BlueprintImplementableEvent, Category="Game|Flow", meta=(DisplayName="Game Phase Changed"))

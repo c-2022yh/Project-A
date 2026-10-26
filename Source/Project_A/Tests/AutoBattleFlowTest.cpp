@@ -65,19 +65,20 @@ bool FAutoBattleFlowTest::RunTest(const FString& Parameters)
         ++GFrameCounter;
     };
     TickWorld(0.02f);
-    if (!TestTrue(TEXT("Roster ready after board BeginPlay"), Mode->bEncounterReady)) return false;
+    TestFalse(TEXT("Board readiness alone does not complete BP setup"), Mode->bEncounterReady);
     TestEqual(TEXT("Thirty tiles"), Board->Tiles.Num(), 30);
     TestEqual(TEXT("Player half"), Board->GetPlayerTiles().Num(), 15);
     TestEqual(TEXT("Enemy half"), Board->GetEnemyTiles().Num(), 15);
-    TestEqual(TEXT("Six roster units"), Mode->BattleUnits.Num(), 6);
-    TestTrue(TEXT("Preparation is explicitly active"), Mode->bPreparationActive);
+    TestEqual(TEXT("C++ no longer creates units automatically"), Mode->BattleUnits.Num(), 0);
+    TestEqual(TEXT("Roster composition is configured in BP"), Mode->UnitRoster.Num(), 0);
+    TestFalse(TEXT("Preparation waits for BP"), Mode->bPreparationActive);
+    TestNull(TEXT("Legacy native spawn function removed"), Mode->FindFunction(TEXT("SpawnEncounterUnits")));
     // BP의 SpawnActor -> 진영 설정 -> 등록 -> 타일 배치 또는 대기 -> 생성 완료 흐름을 검증한다.
     // 이 테스트의 유닛 구성에는 C++의 UnitRoster 생성 반복을 사용하지 않는다.
     Mode->CancelEncounterSetup();
     TestEqual(TEXT("Cancel setup removes registered units"), Mode->BattleUnits.Num(), 0);
     TestTrue(TEXT("Manual encounter setup begins"), Mode->BeginEncounterSetup());
     TestFalse(TEXT("Nested setup rejected"), Mode->BeginEncounterSetup());
-    TestFalse(TEXT("Native spawn cannot mix with BP setup"), Mode->SpawnEncounterUnits());
     TestFalse(TEXT("Null registration rejected"), Mode->RegisterBattleUnit(nullptr));
     FActorSpawnParameters SpawnParams;
     SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
@@ -108,32 +109,64 @@ bool FAutoBattleFlowTest::RunTest(const FString& Parameters)
     ManualPlayer->AttackDamage = 100;
     ManualPlayer->MaxHP = ManualPlayer->CurrentHP = 500;
     Mode->RequestCombatStart();
+    TestTrue(TEXT("Start request waits for BP event handler"), Mode->CurrentPhase == EGamePhase::Preparation);
+    Mode->StartCombatPhase();
     TestTrue(TEXT("Registered units enter combat"), Mode->CurrentPhase == EGamePhase::Combat);
     TestFalse(TEXT("Registration during combat rejected"), Mode->RegisterBattleUnit(ManualPlayer));
     Mode->CancelEncounterSetup();
     TestEqual(TEXT("Setup cancellation does not destroy an active battle"), Mode->BattleUnits.Num(), 2);
-    for (int32 Frame = 0; Frame < 600 && Mode->CurrentPhase == EGamePhase::Combat; ++Frame) TickWorld(1.0f / 30.0f);
+    for (int32 Frame = 0; Frame < 600 && !Mode->bBattleResultPending; ++Frame) TickWorld(1.0f / 30.0f);
+    TestTrue(TEXT("Result waits for BP event handler"), Mode->CurrentPhase == EGamePhase::Combat && Mode->bBattleResultPending);
+    Mode->HandleVictory();
     TestTrue(TEXT("BP-style registered units fight to victory"), Mode->CurrentPhase == EGamePhase::Victory);
     Mode->RequestBattleRestart();
-    TestEqual(TEXT("Native fallback still creates full roster after manual battle"), Mode->BattleUnits.Num(), 6);
-    TestTrue(TEXT("Native fallback still starts preparation"), Mode->bPreparationActive);
+    TestTrue(TEXT("Restart request waits for BP event handler"), Mode->CurrentPhase == EGamePhase::Victory);
+    Mode->RestartBattle();
+    TestEqual(TEXT("Restart cleanup does not spawn replacement units"), Mode->BattleUnits.Num(), 0);
+    TestFalse(TEXT("Restart waits for BP setup"), Mode->bEncounterReady);
+
+    // BP が構成する生成手順の代わりに、テスト内で共通 API を呼び出す。
+    const auto SetupTestEncounter = [&]() -> bool
+    {
+        if (!Mode->BeginEncounterSetup()) return false;
+        for (int32 Index = 0; Index < 3; ++Index)
+        {
+            ABattleUnitBase* Player = World->SpawnActor<ABattleUnitBase>(ABattleUnitBase::StaticClass(),
+                FVector(0, 0, 500), FRotator::ZeroRotator, SpawnParams);
+            if (!Player) return false;
+            Player->TeamType = EBattleTeam::Player;
+            if (!Mode->RegisterBattleUnit(Player) || !Mode->MoveUnitToWaitingArea(Player, Index, 3)) return false;
+            ABattleUnitBase* Enemy = World->SpawnActor<ABattleUnitBase>(ABattleUnitBase::StaticClass(),
+                FVector(0, 0, 500), FRotator::ZeroRotator, SpawnParams);
+            if (!Enemy) return false;
+            Enemy->TeamType = EBattleTeam::Enemy;
+            if (!Mode->RegisterBattleUnit(Enemy) || !Enemy->PlaceOnTile(Board->GetTile(4, Index + 1))) return false;
+        }
+        if (!Mode->CompleteEncounterSetup()) return false;
+        Mode->StartPreparationPhase();
+        return Mode->bPreparationActive;
+    };
+    if (!TestTrue(TEXT("Test supplies BP-equivalent encounter setup"), SetupTestEncounter())) return false;
 
     ABattleUnitBase* OriginalRosterUnit = Mode->BattleUnits[0];
     Mode->StartPreparationPhase();
     TestTrue(TEXT("Starting preparation does not respawn the roster"), Mode->BattleUnits[0] == OriginalRosterUnit);
-    TestFalse(TEXT("Duplicate spawn rejected"), Mode->SpawnEncounterUnits());
+    TestFalse(TEXT("Duplicate setup rejected"), Mode->BeginEncounterSetup());
     TestEqual(TEXT("Duplicate spawn preserves roster size"), Mode->BattleUnits.Num(), 6);
     for (const FName EventName : {FName(TEXT("ReceiveBoardReady")), FName(TEXT("ReceivePreparationExpired")),
         FName(TEXT("ReceiveCombatStartRequested")), FName(TEXT("ReceiveBattleResultDetected")), FName(TEXT("ReceiveRestartRequested"))})
     {
         UFunction* Event = Mode->FindFunction(EventName);
         if (TestNotNull(*FString::Printf(TEXT("Blueprint flow event %s is reflected"), *EventName.ToString()), Event))
-            TestTrue(TEXT("Flow event supports Blueprint override"), Event->HasAllFunctionFlags(FUNC_BlueprintEvent | FUNC_Native));
+        {
+            TestTrue(TEXT("Flow event is implemented in Blueprint"), Event->HasAllFunctionFlags(FUNC_BlueprintEvent));
+            TestFalse(TEXT("Flow event has no native fallback"), Event->HasAnyFunctionFlags(FUNC_Native));
+        }
     }
 
     TestEqual(TEXT("No player deployed initially"), Mode->GetDeployedPlayerCount(), 0);
     TestEqual(TEXT("Enemies predeployed"), Mode->GetAliveTeamCount(EBattleTeam::Enemy), 3);
-    Mode->RequestCombatStart();
+    Mode->StartCombatPhase();
     TestTrue(TEXT("Empty deployment cannot start"), Mode->CurrentPhase == EGamePhase::Preparation);
 
     TArray<ABattleUnitBase*> Players;
@@ -155,38 +188,53 @@ bool FAutoBattleFlowTest::RunTest(const FString& Parameters)
     TestEqual(TEXT("Negative damage rejected"), Unit->CurrentHP, OriginalHP);
     for (ABattleUnitBase* Player : Players) { Player->AttackDamage = 100; Player->MaxHP = 500; Player->CurrentHP = 500; }
     const FVector Start = Unit->GetActorLocation();
-    Mode->RequestCombatStart();
+    Mode->StartCombatPhase();
     TestTrue(TEXT("Combat started"), Mode->CurrentPhase == EGamePhase::Combat);
     TestFalse(TEXT("Combat placement locked"), Unit->PlaceOnTile(Board->GetTile(0, 0)));
-    for (int32 Frame = 0; Frame < 1200 && Mode->CurrentPhase == EGamePhase::Combat; ++Frame)
+    for (int32 Frame = 0; Frame < 1200 && !Mode->bBattleResultPending; ++Frame)
         TickWorld(1.0f / 30.0f);
     TestTrue(TEXT("Units physically moved"), FVector::Dist2D(Start, Unit->GetActorLocation()) > 50);
+    TestTrue(TEXT("Automatic combat detects a result"), Mode->bBattleResultPending);
+    TestEqual(TEXT("Player team eliminated all enemies"), Mode->GetAliveTeamCount(EBattleTeam::Enemy), 0);
+    Mode->HandleVictory();
     TestTrue(TEXT("Automatic combat reaches victory"), Mode->CurrentPhase == EGamePhase::Victory);
-    TestFalse(TEXT("Native result fallback clears pending result"), Mode->bBattleResultPending);
+    TestFalse(TEXT("BP-callable result handler clears pending result"), Mode->bBattleResultPending);
     for (ABattleUnitBase* Survivor : Mode->BattleUnits)
         if (IsValid(Survivor)) TestFalse(TEXT("Result stops combat"), Survivor->bInCombat);
 
-    Mode->RequestBattleRestart();
+    Mode->RestartBattle();
+    if (!TestTrue(TEXT("BP-equivalent setup after restart"), SetupTestEncounter())) return false;
     TestTrue(TEXT("Restart returns to preparation"), Mode->CurrentPhase == EGamePhase::Preparation && Mode->bEncounterReady);
     TestEqual(TEXT("Restart clears deployment"), Mode->GetDeployedPlayerCount(), 0);
     TestEqual(TEXT("Restart creates fresh roster"), Mode->BattleUnits.Num(), 6);
     for (ABattleUnitBase* Candidate : Mode->BattleUnits)
         if (Candidate->TeamType == EBattleTeam::Player) { Candidate->PlaceOnTile(Board->GetTile(0, 0)); break; }
-    Mode->RequestCombatStart();
+    Mode->StartCombatPhase();
     for (ABattleUnitBase* Candidate : Mode->BattleUnits)
         if (Candidate->TeamType == EBattleTeam::Player && Candidate->bIsDeployed) Candidate->Die();
     TickWorld(0.02f);
+    TestTrue(TEXT("Defeat waits for BP result handling"), Mode->bBattleResultPending);
+    Mode->HandleVictory();
+    TestTrue(TEXT("Pending defeat cannot be changed to victory"), Mode->CurrentPhase == EGamePhase::Combat);
+    Mode->HandleGameOver();
     TestTrue(TEXT("Undeployed bench does not prevent defeat"), Mode->CurrentPhase == EGamePhase::GameOver);
 
-    Mode->RequestBattleRestart();
+    Mode->RestartBattle();
+    if (!TestTrue(TEXT("BP-equivalent setup for timer check"), SetupTestEncounter())) return false;
     Mode->PreparationDuration = 0.05f;
     Mode->RemainingPreparationTime = 0.05f;
     TickWorld(0.1f);
     TestTrue(TEXT("Empty timer expiry stays in preparation"), Mode->CurrentPhase == EGamePhase::Preparation);
+    TestEqual(TEXT("C++ timer reaches zero without native transition"), Mode->RemainingPreparationTime, 0.0f);
+    Mode->StartCombatPhase();
+    TestTrue(TEXT("Empty combat start retries preparation"), Mode->bPreparationActive && Mode->RemainingPreparationTime > 0);
     for (ABattleUnitBase* Candidate : Mode->BattleUnits)
         if (Candidate->TeamType == EBattleTeam::Player) { Candidate->PlaceOnTile(Board->GetTile(0, 0)); break; }
     TickWorld(0.1f);
-    TestTrue(TEXT("Timer starts a deployed team"), Mode->CurrentPhase == EGamePhase::Combat);
+    TestTrue(TEXT("Timer expiry still waits for BP with deployed units"), Mode->CurrentPhase == EGamePhase::Preparation);
+    TestEqual(TEXT("Expired preparation timer is zero"), Mode->RemainingPreparationTime, 0.0f);
+    Mode->StartCombatPhase();
+    TestTrue(TEXT("BP-callable combat start activates deployed team"), Mode->CurrentPhase == EGamePhase::Combat);
     return true;
 }
 #endif

@@ -13,30 +13,31 @@ void AAutoBattleHUD::DrawHUD()
     const AAutoBattleGameMode* Mode = Cast<AAutoBattleGameMode>(UGameplayStatics::GetGameMode(this));
     if (!Mode) return;
     const float Width = Canvas->ClipX;
-    DrawRect(FLinearColor(0.01f, 0.02f, 0.04f, 0.85f), 0, 0, Width, 72);
-    FString Title;
-    switch (Mode->CurrentPhase)
+    // Preparation time and the start button are owned by WBP_BattleHUD.
+    // Keep the remaining presentation until it is implemented in the widget.
+    if (Mode->CurrentPhase != EGamePhase::Preparation)
     {
-        case EGamePhase::Preparation:
-            Title = FString::Printf(TEXT("PREPARATION  %.0fs    Deployed %d / %d"),
-                Mode->RemainingPreparationTime, Mode->GetDeployedPlayerCount(), Mode->MaxBoardUnits); break;
-        case EGamePhase::Combat:
-            Title = FString::Printf(TEXT("COMBAT  %.0fs    Blue %d : Red %d"), Mode->ElapsedCombatTime,
-                Mode->GetAliveTeamCount(EBattleTeam::Player), Mode->GetAliveTeamCount(EBattleTeam::Enemy)); break;
-        case EGamePhase::Victory: Title = TEXT("VICTORY"); break;
-        case EGamePhase::GameOver: Title = TEXT("DEFEAT"); break;
-        default: Title = TEXT("ROUND CLEAR"); break;
+        DrawRect(FLinearColor(0.01f, 0.02f, 0.04f, 0.85f), 0, 0, Width, 72);
+        FString Title;
+        switch (Mode->CurrentPhase)
+        {
+            case EGamePhase::Combat:
+                Title = FString::Printf(TEXT("COMBAT  %.0fs    Blue %d : Red %d"), Mode->ElapsedCombatTime,
+                    Mode->GetAliveTeamCount(EBattleTeam::Player), Mode->GetAliveTeamCount(EBattleTeam::Enemy)); break;
+            case EGamePhase::Victory: Title = TEXT("VICTORY"); break;
+            case EGamePhase::GameOver: Title = TEXT("DEFEAT"); break;
+            default: Title = TEXT("ROUND CLEAR"); break;
+        }
+        DrawText(Title, FLinearColor::White, 14, 8, nullptr, 1.1f);
+        DrawText(Mode->StatusMessage, FLinearColor(0.8f, 0.85f, 0.95f), 14, 31, nullptr, 0.7f);
+        DrawText(TEXT("R: restart"), FLinearColor::White, 14, 51, nullptr, 0.7f);
     }
-    DrawText(Title, FLinearColor::White, 14, 8, nullptr, 1.1f);
-    DrawText(Mode->StatusMessage, FLinearColor(0.8f, 0.85f, 0.95f), 14, 31, nullptr, 0.7f);
-    DrawText(TEXT("LMB: select/place   RMB: cancel   Enter: start   R: restart"), FLinearColor::White, 14, 51, nullptr, 0.7f);
-    const bool CanStart = Mode->bEncounterReady && (Mode->CurrentPhase == EGamePhase::Preparation || Mode->CurrentPhase == EGamePhase::RoundClear);
     const float ButtonY = FMath::Max(110.0f, Canvas->ClipY - 52.0f);
-    if (CanStart)
+    if (Mode->bEncounterReady && Mode->CurrentPhase == EGamePhase::RoundClear)
     {
         DrawRect(FLinearColor(0.05f, 0.25f, 0.4f, 0.95f), 20, ButtonY, 160, 36);
-        DrawText(Mode->CurrentPhase == EGamePhase::RoundClear ? TEXT("NEXT ROUND") : TEXT("START COMBAT"), FLinearColor::White, 32, ButtonY + 9);
-        AddHitBox(FVector2D(20, ButtonY), FVector2D(160, 36), TEXT("Start"), true);
+        DrawText(TEXT("NEXT ROUND"), FLinearColor::White, 32, ButtonY + 9);
+        AddHitBox(FVector2D(20, ButtonY), FVector2D(160, 36), TEXT("NextRound"), true);
     }
     DrawRect(FLinearColor(0.2f, 0.2f, 0.25f, 0.95f), Width - 150, ButtonY, 130, 36);
     DrawText(TEXT("RESTART"), FLinearColor::White, Width - 132, ButtonY + 9);
@@ -66,7 +67,11 @@ void AAutoBattleHUD::NotifyHitBoxClick(FName BoxName)
     Super::NotifyHitBoxClick(BoxName);
     if (AAutoBattlePlayerController* PC = Cast<AAutoBattlePlayerController>(PlayerOwner))
     {
-        if (BoxName == TEXT("Start")) PC->RequestStartCombat();
+        if (BoxName == TEXT("NextRound"))
+        {
+            const AAutoBattleGameMode* Mode = Cast<AAutoBattleGameMode>(UGameplayStatics::GetGameMode(this));
+            if (Mode && Mode->CurrentPhase == EGamePhase::RoundClear) PC->RequestStartCombat();
+        }
         else if (BoxName == TEXT("Restart")) PC->RequestRestart();
     }
 }

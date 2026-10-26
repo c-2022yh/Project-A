@@ -3,7 +3,7 @@
 #include "GameFramework/HUD.h"
 #include "AutoBattleHUD.generated.h"
 
-// 임시 Canvas HUD. UI가 준비되면 HUDClass를 교체하여 사용할 수 있다.
+// Canvas fallback for unit health, battle results, restart and next round.
 UCLASS()
 class PROJECT_A_API AAutoBattleHUD : public AHUD
 {

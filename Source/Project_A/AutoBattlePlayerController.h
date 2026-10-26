@@ -11,22 +11,18 @@ class PROJECT_A_API AAutoBattlePlayerController : public APlayerController
 public:
     AAutoBattlePlayerController();
     virtual void PlayerTick(float DeltaSeconds) override;
-protected:
-    virtual void BeginPlay() override;
-    virtual void SetupInputComponent() override;
-public:
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Selection")
     ABattleUnitBase* SelectedUnit = nullptr;
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Selection")
     ABoardTile* HoveredTile = nullptr;
-    // 지정 태그가 있는 CameraActor를 우선 사용하고, 없으면 레벨에서 처음 찾은 CameraActor를 사용한다.
+    // Camera tag used by the Blueprint BeginPlay graph.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Camera")
     FName BattleCameraTag = TEXT("BattleCamera");
+    // BP input graph uses this trace, then chooses selection or placement.
+    UFUNCTION(BlueprintCallable, Category="Selection") bool GetBoardClickHit(FHitResult& Hit);
     UFUNCTION(BlueprintCallable, Category="Selection") void SelectUnit(ABattleUnitBase* Unit);
     UFUNCTION(BlueprintCallable, Category="Selection") void ClearSelection();
     UFUNCTION(BlueprintCallable, Category="Board") bool PlaceSelectedUnitOnTile(ABoardTile* Tile);
     UFUNCTION(BlueprintCallable, Category="Game") void RequestStartCombat();
     UFUNCTION(BlueprintCallable, Category="Game") void RequestRestart();
-private:
-    void HandlePrimaryClick();
 };

@@ -2,12 +2,9 @@
 #include "AutoBattleGameMode.h"
 #include "BattleUnitBase.h"
 #include "BoardTile.h"
-#include "Camera/CameraActor.h"
 #include "Components/CapsuleComponent.h"
-#include "Components/InputComponent.h"
 #include "DrawDebugHelpers.h"
 #include "GameFramework/HUD.h"
-#include "InputCoreTypes.h"
 #include "Kismet/GameplayStatics.h"
 
 AAutoBattlePlayerController::AAutoBattlePlayerController()
@@ -16,28 +13,6 @@ AAutoBattlePlayerController::AAutoBattlePlayerController()
     bEnableClickEvents = true;
     bEnableMouseOverEvents = true;
     bAutoManageActiveCameraTarget = false;
-}
-void AAutoBattlePlayerController::BeginPlay()
-{
-    Super::BeginPlay();
-    FInputModeGameAndUI Mode;
-    Mode.SetHideCursorDuringCapture(false);
-    Mode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
-    SetInputMode(Mode);
-    TArray<AActor*> Cameras;
-    UGameplayStatics::GetAllActorsOfClass(this, ACameraActor::StaticClass(), Cameras);
-    AActor* Camera = Cameras.IsEmpty() ? nullptr : Cameras[0];
-    for (AActor* Candidate : Cameras)
-        if (Candidate->ActorHasTag(BattleCameraTag)) { Camera = Candidate; break; }
-    if (Camera) SetViewTarget(Camera);
-}
-void AAutoBattlePlayerController::SetupInputComponent()
-{
-    Super::SetupInputComponent();
-    InputComponent->BindKey(EKeys::LeftMouseButton, IE_Pressed, this, &AAutoBattlePlayerController::HandlePrimaryClick);
-    InputComponent->BindKey(EKeys::RightMouseButton, IE_Pressed, this, &AAutoBattlePlayerController::ClearSelection);
-    InputComponent->BindKey(EKeys::Enter, IE_Pressed, this, &AAutoBattlePlayerController::RequestStartCombat);
-    InputComponent->BindKey(EKeys::R, IE_Pressed, this, &AAutoBattlePlayerController::RequestRestart);
 }
 void AAutoBattlePlayerController::SelectUnit(ABattleUnitBase* Unit)
 {
@@ -61,30 +36,14 @@ bool AAutoBattlePlayerController::PlaceSelectedUnitOnTile(ABoardTile* Tile)
     ClearSelection();
     return true;
 }
-void AAutoBattlePlayerController::HandlePrimaryClick()
+bool AAutoBattlePlayerController::GetBoardClickHit(FHitResult& Hit)
 {
+    Hit = FHitResult();
     float X, Y;
-    if (GetMousePosition(X, Y) && GetHUD() && GetHUD()->GetHitBoxAtCoordinates(FVector2D(X, Y), true)) return;
-    // 가져온 육각형 메시에는 단순 충돌 도형 없이 삼각형 기반 충돌만 있을 수 있다.
-    FHitResult Hit;
-    if (!GetHitResultUnderCursor(ECC_Visibility, true, Hit))
-    {
-        if (IsValid(SelectedUnit))
-            if (AAutoBattleGameMode* Mode = Cast<AAutoBattleGameMode>(UGameplayStatics::GetGameMode(this)))
-                Mode->StatusMessage = TEXT("No tile hit. Click an empty player tile near the camera.");
-        return;
-    }
-    if (ABattleUnitBase* Unit = Cast<ABattleUnitBase>(Hit.GetActor())) SelectUnit(Unit);
-    else if (ABoardTile* Tile = Cast<ABoardTile>(Hit.GetActor()))
-    {
-        if (IsValid(SelectedUnit)) PlaceSelectedUnitOnTile(Tile);
-        else if (ABattleUnitBase* Occupant = Cast<ABattleUnitBase>(Tile->OccupiedUnit)) SelectUnit(Occupant);
-    }
-    else if (IsValid(SelectedUnit))
-    {
-        if (AAutoBattleGameMode* Mode = Cast<AAutoBattleGameMode>(UGameplayStatics::GetGameMode(this)))
-            Mode->StatusMessage = TEXT("Click an empty player tile near the camera, not the ground.");
-    }
+    if (!GetMousePosition(X, Y)) return false;
+    if (GetHUD() && GetHUD()->GetHitBoxAtCoordinates(FVector2D(X, Y), true)) return false;
+    // Preserve complex tracing for the custom hex tile mesh.
+    return GetHitResultUnderCursor(ECC_Visibility, true, Hit);
 }
 void AAutoBattlePlayerController::PlayerTick(float DeltaSeconds)
 {
