@@ -112,7 +112,7 @@ enum class EUnitGrowthStat : uint8 { MaxHealth, AttackDamage, AbilityPower, Armo
 UENUM(BlueprintType)
 enum class EUnitDamageSource : uint8 { BasicAttack, Skill, Triggered, DamageOverTime };
 UENUM(BlueprintType)
-enum class EUnitPathResult : uint8 { Unavailable, TemporarilyBlocked, Unreachable, ReservedStep };
+enum class EUnitPathResult : uint8 { Unavailable, TemporarilyBlocked, Unreachable, ReservedStep, AlreadyInRange };
 UENUM(BlueprintType)
 enum class EUnitNegativeResistancePolicy : uint8 { ClampToZero, AmplifyDamage };
 UENUM(BlueprintType)

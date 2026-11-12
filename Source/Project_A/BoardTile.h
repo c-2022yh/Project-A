@@ -13,6 +13,9 @@ enum class EBoardTileTeam : uint8
     Neutral UMETA(DisplayName = "Neutral")
 };
 
+class ABoardManager;
+class ABattleUnitBase;
+
 //ABoardTile 클래스 정의
 UCLASS()
 class PROJECT_A_API ABoardTile : public AActor
@@ -24,6 +27,7 @@ public:
 
 protected:
     virtual void BeginPlay() override;
+    virtual void EndPlay(const EEndPlayReason::Type Reason) override;
 
 public:
 	//타일의 메쉬 컴포넌트
@@ -71,4 +75,15 @@ public:
 	//타일에 유닛 제거
     UFUNCTION(BlueprintCallable, Category = "Tile")
     void ClearTile();
+    // 지형 통행 불가와 유닛에 의한 일시적인 길막을 구분한다.
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Tile|Movement") bool bBlocksMovement = false;
+    UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Transient, Category="Tile|Board") TObjectPtr<ABoardManager> OwningBoard = nullptr;
+    UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Transient, Category="Tile|Movement") TObjectPtr<ABattleUnitBase> ReservedUnit = nullptr;
+    UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Transient, Category="Tile|Movement") int32 ReservedMoveId = 0;
+    UFUNCTION(BlueprintPure, Category="Tile|Movement") bool IsReserved() const;
+    UFUNCTION(BlueprintPure, Category="Tile|Movement") bool IsReservedFor(ABattleUnitBase* Unit, int32 MoveId) const;
+private:
+    friend class ABoardManager;
+    void AssignOccupant(AActor* Unit);
+    void ClearOccupant();
 };

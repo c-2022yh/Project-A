@@ -2,9 +2,11 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "UnitTypes.h"
 #include "BoardManager.generated.h"
 
 class ABoardTile;
+class ABattleUnitBase;
 class UMaterialInterface;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FBoardGeneratedEvent);
@@ -19,6 +21,7 @@ public:
 
 protected:
     virtual void BeginPlay() override;
+    virtual void EndPlay(const EEndPlayReason::Type Reason) override;
 
 public:
 
@@ -100,5 +103,43 @@ public:
     UFUNCTION(BlueprintPure, Category = "Board")
     TArray<ABoardTile*> GetEnemyTiles() const;
 
-	
+    // C++가 경로/예약/점유를 소유한다. BP는 배치 요청과 표시만 담당한다.
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Board|Movement", meta=(ClampMin="0.1"))
+    float UnstartedReservationTimeout = 2.f;
+    UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category="Board|Validation")
+    FString LastMovementMessage;
+
+    UFUNCTION(BlueprintPure, Category="Board|Path") ABoardTile* GetTileByHex(int32 Q, int32 R) const;
+    UFUNCTION(BlueprintPure, Category="Board|Path") TArray<ABoardTile*> GetNeighbors(ABoardTile* Tile) const;
+    UFUNCTION(BlueprintPure, Category="Board|Units") TArray<ABattleUnitBase*> GetUnitsOnBoard() const;
+    // 경로에는 출발 칸을 제외하고 도착 칸까지 담는다. 이미 사거리 안이면 빈 경로로 성공한다.
+    UFUNCTION(BlueprintCallable, Category="Board|Path")
+    bool FindPathToAttackRange(ABattleUnitBase* Unit, ABattleUnitBase* Target, TArray<ABoardTile*>& Path) const;
+    UFUNCTION(BlueprintCallable, Category="Board|Movement")
+    EUnitPathResult TryReserveNextStep(ABattleUnitBase* Unit, ABattleUnitBase* Target, int32 MoveId, ABoardTile*& NextTile);
+    UFUNCTION(BlueprintPure, Category="Board|Movement")
+    bool IsMoveReservationValid(ABattleUnitBase* Unit, int32 MoveId, ABoardTile* Destination) const;
+    UFUNCTION(BlueprintCallable, Category="Board|Movement") bool CommitReservedMove(ABattleUnitBase* Unit, int32 MoveId);
+    UFUNCTION(BlueprintCallable, Category="Board|Movement") bool CancelReservedMove(ABattleUnitBase* Unit, int32 MoveId);
+    UFUNCTION(BlueprintCallable, Category="Board|Movement") void ReleaseUnitTiles(ABattleUnitBase* Unit);
+    // 기존 Tile.SetOccupiedUnit도 이 준비 배치 검증을 사용한다. 전투 이동은 Commit만 허용한다.
+    UFUNCTION(BlueprintCallable, Category="Board|Placement") bool TryPlaceUnit(ABattleUnitBase* Unit, ABoardTile* Tile);
+    UFUNCTION(BlueprintCallable, Category="Board|Movement") void PruneInvalidReservations();
+
+private:
+    friend class ABoardTile;
+    struct FMoveReservation
+    {
+        TWeakObjectPtr<ABattleUnitBase> Unit;
+        TWeakObjectPtr<ABoardTile> Source;
+        TWeakObjectPtr<ABoardTile> Destination;
+        int32 MoveId = 0;
+        double CreatedAt = 0.0;
+    };
+    TMap<TWeakObjectPtr<ABattleUnitBase>, FMoveReservation> Reservations;
+    bool bReleasingUnits = false;
+    bool OwnsTile(const ABoardTile* Tile) const;
+    bool BuildPath(ABattleUnitBase* Unit, ABattleUnitBase* Target, bool bIgnoreUnits, TArray<ABoardTile*>& Path) const;
+    void ClearTileOccupancy(ABoardTile* Tile);
+    void NotifyTileRemoved(ABoardTile* Tile);
 };

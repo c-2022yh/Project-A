@@ -1,5 +1,6 @@
 #include "BattleUnitBase.h"
 #include "BoardTile.h"
+#include "BoardManager.h"
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
 #include "Animation/AnimSequence.h"
@@ -295,6 +296,7 @@ bool ABattleUnitBase::SetPreparationPlacement(FTransform Transform, ABoardTile* 
         if (Tile->TeamType != Required || (Tile->OccupiedUnit != this && !Tile->CanPlaceUnit())) return false;
         Tile->SetOccupiedUnit(this);
         if (Tile->OccupiedUnit != this) return false;
+        BoardManager = Tile->OwningBoard;
         Transform.SetLocation(Tile->GetSurfaceLocation() + FVector(0, 0, 1.f));
     }
     else
@@ -315,6 +317,27 @@ bool ABattleUnitBase::SetWaitingPlacement(FVector Location)
     FTransform Transform = GetActorTransform(); Transform.SetLocation(Location);
     return SetPreparationPlacement(Transform, nullptr, EUnitPlacement::Waiting);
 }
+bool ABattleUnitBase::SetBoardManager(ABoardManager* Board)
+{
+    if (bInCombat || (Board && (!IsValid(Board) || Board->GetWorld() != GetWorld()))) return false;
+    if (IsValid(CurrentTile) && IsValid(CurrentTile->OwningBoard) && CurrentTile->OwningBoard != Board) return false;
+    BoardManager = Board; return true;
+}
+bool ABattleUnitBase::CancelBoardMove(int32 MoveId)
+{
+    if (bReleasingMove || MoveId <= 0 || ActiveActionId != MoveId || ActionState != EUnitActionState::Moving) return false;
+    CancelAction(); RetargetTimer = 0.f; return true;
+}
+EUnitPathResult ABattleUnitBase::RequestCombatStep_Implementation(ABattleUnitBase* Target, int32 MoveId, ABoardTile*& NextTile)
+{
+    NextTile = nullptr;
+    if (!IsValid(BoardManager) && IsValid(CurrentTile)) BoardManager = CurrentTile->OwningBoard;
+    return IsValid(BoardManager) ? BoardManager->TryReserveNextStep(this, Target, MoveId, NextTile) : EUnitPathResult::Unavailable;
+}
+void ABattleUnitBase::MovementReservationReleased_Implementation(ABoardTile* Tile, int32 MoveId, bool bCompleted)
+{
+    // 표시/디버그용 확장 지점이다. 도착 확정과 예약 해제는 알림 전에 C++에서 끝낸다.
+}
 void ABattleUnitBase::SetCombatRoster(const TArray<ABattleUnitBase*>& Units)
 {
     if (bInCombat) return;
@@ -324,6 +347,9 @@ void ABattleUnitBase::SetCombatRoster(const TArray<ABattleUnitBase*>& Units)
 void ABattleUnitBase::StartCombat()
 {
     if (!IsAlive() || Placement != EUnitPlacement::Board || !IsValid(CurrentTile) || bInCombat || bCombatStartedForRound) return;
+    if (IsValid(CurrentTile->OwningBoard)) BoardManager = CurrentTile->OwningBoard;
+    // 명시적으로 받은 명단이 없으면 시작 시점의 보드 유닛을 한 번만 수집한다.
+    if (CombatRoster.IsEmpty() && IsValid(BoardManager)) SetCombatRoster(BoardManager->GetUnitsOnBoard());
     bCombatStartedForRound = true; bInCombat = true; ++CombatGeneration;
     PreparationTransform = GetActorTransform(); PreparationTile = CurrentTile; PreparationPlacement = Placement;
     ActiveModifiers.Empty(); Shields.Empty(); AttackEnhancements.Empty(); AppliedDamage.Empty(); GrowthThisCombat.Empty();
@@ -341,7 +367,11 @@ void ABattleUnitBase::StopCombat()
     bInCombat = false; bCombatStartPending = false; ++CombatGeneration;
     CancelAction(); CurrentTarget = nullptr;
     // 전원 정지 후 준비 위치를 복구할 수 있게 전투 타일 점유를 먼저 반환한다.
-    if (bWasInCombat && IsValid(CurrentTile) && CurrentTile->OccupiedUnit == this) CurrentTile->ClearTile();
+    if (bWasInCombat)
+    {
+        if (IsValid(BoardManager)) BoardManager->ReleaseUnitTiles(this);
+        else if (IsValid(CurrentTile) && CurrentTile->OccupiedUnit == this) CurrentTile->ClearTile();
+    }
     TArray<FPendingProjectile> Removed = MoveTemp(Projectiles);
     for (const FPendingProjectile& Shot : Removed) ProjectileRemoved(Shot.Id, false);
     ActiveModifiers.Empty(); Shields.Empty(); AttackEnhancements.Empty();
@@ -364,7 +394,12 @@ bool ABattleUnitBase::ResetForRound()
     RecalculateStats(); CurrentHP = FinalStats.MaxHealth; CurrentMana = UsesMana() ? FinalStats.StartMana : 0.f;
     SetActorTransform(PreparationTransform);
     Placement = PreparationPlacement; bIsDeployed = Placement == EUnitPlacement::Board;
-    if (bIsDeployed) PreparationTile->SetOccupiedUnit(this);
+    if (bIsDeployed)
+    {
+        PreparationTile->SetOccupiedUnit(this);
+        if (CurrentTile != PreparationTile) return false;
+        BoardManager = PreparationTile->OwningBoard;
+    }
     ApplyVisuals(); OnHealthChanged.Broadcast(this); OnManaChanged.Broadcast(this);
     return true;
 }
@@ -383,10 +418,18 @@ void ABattleUnitBase::ChangeAction(EUnitActionState State)
 }
 void ABattleUnitBase::ReleaseMove(bool bCompleted)
 {
+    if (bReleasingMove) return;
+    TGuardValue<bool> Guard(bReleasingMove, true);
     ABoardTile* Tile = ReservedTile;
+    const int32 MoveId = ActiveActionId;
     ReservedTile = nullptr;
-    if (!bCompleted) SetActorLocation(MoveStart);
-    if (IsValid(Tile)) MovementReservationReleased(Tile, ActiveActionId, bCompleted);
+    if (!bCompleted)
+    {
+        SetActorLocation(MoveStart);
+        if (IsValid(BoardManager)) BoardManager->CancelReservedMove(this, MoveId);
+    }
+    // BP가 이 알림을 재정의해도 C++ 예약 정리는 이미 끝난 상태다.
+    if (IsValid(Tile)) MovementReservationReleased(Tile, MoveId, bCompleted);
 }
 void ABattleUnitBase::CancelAction(bool bRefundMana)
 {
@@ -402,7 +445,8 @@ void ABattleUnitBase::Die()
     if (bIsDead) return;
     bIsDead = true; CurrentHP = 0.f;
     CancelAction(); CurrentTarget = nullptr;
-    if (IsValid(CurrentTile) && CurrentTile->OccupiedUnit == this) CurrentTile->ClearTile();
+    if (IsValid(BoardManager)) BoardManager->ReleaseUnitTiles(this);
+    else if (IsValid(CurrentTile) && CurrentTile->OccupiedUnit == this) CurrentTile->ClearTile();
     SelectionCollision->SetCollisionEnabled(ECollisionEnabled::NoCollision);
     if (Definition.Animations.DeathMontage)
         if (UAnimInstance* Anim = Body->GetAnimInstance()) Anim->Montage_Play(Definition.Animations.DeathMontage);
@@ -639,15 +683,22 @@ void ABattleUnitBase::Think(float Delta)
     RetargetTimer = FMath::Max(0.05f, Positive(CombatPolicy.RetargetInterval));
     if (!bInCombat || !IsAlive() || IsStunned() || ActionState != EUnitActionState::Idle)
     {
-        if (Path == EUnitPathResult::ReservedStep && IsValid(Next)) MovementReservationReleased(Next, MoveId, false);
+        if (Path == EUnitPathResult::ReservedStep)
+        {
+            if (IsValid(BoardManager)) BoardManager->CancelReservedMove(this, MoveId);
+            if (IsValid(Next)) MovementReservationReleased(Next, MoveId, false);
+        }
         return;
     }
+    if (Path == EUnitPathResult::AlreadyInRange) { TryBasicAttack(); return; }
     if (Path == EUnitPathResult::ReservedStep)
     {
         // 예약은 보드가 수행하고 유닛은 예약된 인접 빈 타일로만 이동한다.
-        if (!IsValid(Next) || Next == CurrentTile || HexDistance(CurrentTile, Next) != 1 || !Next->CanPlaceUnit())
+        if (!IsValid(BoardManager) || !IsValid(Next) || Next == CurrentTile || HexDistance(CurrentTile, Next) != 1
+            || !BoardManager->IsMoveReservationValid(this, MoveId, Next))
         {
             LastValidationMessage = TEXT("Board must reserve an empty adjacent tile before returning ReservedStep.");
+            if (IsValid(BoardManager)) BoardManager->CancelReservedMove(this, MoveId);
             if (IsValid(Next)) MovementReservationReleased(Next, MoveId, false);
             return;
         }
@@ -655,7 +706,7 @@ void ABattleUnitBase::Think(float Delta)
         BlockedSeconds = 0.f; ChangeAction(EUnitActionState::Moving);
     }
     else if (Path == EUnitPathResult::Unavailable)
-        LastValidationMessage = TEXT("Connect RequestCombatStep to the board reservation/path API.");
+        LastValidationMessage = TEXT("Place the unit on a BoardManager tile, or assign the board before requesting movement.");
     else
     {
         BlockedSeconds += RetargetTimer;
@@ -742,16 +793,18 @@ void ABattleUnitBase::TickAction(float Delta)
     if (Id <= 0) return;
     if (ActionState == EUnitActionState::Moving)
     {
-        if (!IsValid(ReservedTile)) { CancelAction(); return; }
+        if (!IsValid(BoardManager) || !BoardManager->IsMoveReservationValid(this, Id, ReservedTile)
+            || !IsEnemyTarget(CurrentTarget)) { CancelAction(); return; }
         const FVector Goal = ReservedTile->GetSurfaceLocation() + FVector(0, 0, 1.f);
+        FVector Facing = Goal - GetActorLocation(); Facing.Z = 0.f;
+        if (!Facing.IsNearlyZero()) SetActorRotation(Facing.Rotation());
         SetActorLocation(FMath::VInterpConstantTo(GetActorLocation(), Goal, Delta, FinalStats.MovementSpeed));
         if (GetActorLocation().Equals(Goal, 0.1f))
         {
-            if (!ReservedTile->CanPlaceUnit()) { CancelAction(); return; }
-            ReservedTile->SetOccupiedUnit(this);
-            const bool bCompleted = CurrentTile == ReservedTile;
-            ReleaseMove(bCompleted);
-            ActiveActionId = 0; ChangeAction(EUnitActionState::Idle);
+            if (!BoardManager->CommitReservedMove(this, Id)) { CancelAction(); return; }
+            ReleaseMove(true);
+            // 도착 알림에서 새 행동을 시작했으면 그 행동을 덮어쓰지 않는다.
+            if (ActiveActionId == Id) { ActiveActionId = 0; ChangeAction(EUnitActionState::Idle); }
         }
         return;
     }

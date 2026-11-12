@@ -6,6 +6,7 @@
 #include "BattleUnitBase.generated.h"
 
 class ABoardTile;
+class ABoardManager;
 class UCapsuleComponent;
 class USceneComponent;
 class USkeletalMeshComponent;
@@ -22,8 +23,9 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FBattleUnitHealEvent, ABattleUnit
  * 2. 전투 관리자는 SetCombatRoster로 양 팀 명단을 전달한 뒤 StartCombat을 호출한다.
  * 3. 공격 Notify는 시작 이벤트에서 받은 ActionId로 CommitAttackHit/FinishAction을 호출한다.
  *    오래된 Notify를 현재 ID로 바꿔 호출하지 않는다. 몽타주가 없으면 타이머 방식을 선택한다.
- * 4. 보드 담당은 RequestCombatStep에서 인접 타일을 원자적으로 예약하고 ReservedStep을 반환한다.
- *    MovementReservationReleased에서 완료/취소된 예약을 해제한다. 이 클래스는 길찾기를 소유하지 않는다.
+ * 4. 생성된 보드 타일에 배치하면 BoardManager를 자동 연결하고 C++가 경로/예약을 처리한다.
+ *    전투 명단을 따로 전달하지 않았다면 시작 시 보드의 배치 유닛 목록을 사용한다.
+ *    BP의 RequestCombatStep 재정의는 기본적으로 필요 없다. 예약은 반드시 보드 API를 사용한다.
  * 5. 투사체 외형은 ProjectileUpdated/ProjectileRemoved에서 표시만 한다. BP는 피해를 적용하지 않는다.
  * 6. 전투 종료는 전원 StopCombat → 전원 ResetForRound. 승패/보상/연장전 진입 시간은 진행 담당이다.
  *
@@ -49,6 +51,7 @@ public:
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Unit|Components") TObjectPtr<UStaticMeshComponent> MainHand;
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Unit|Components") TObjectPtr<UStaticMeshComponent> OffHand;
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Unit|Components") TObjectPtr<UCapsuleComponent> SelectionCollision;
+    UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Transient, Category="Unit|Board") TObjectPtr<ABoardManager> BoardManager = nullptr;
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Unit|Setup") FDataTableRowHandle UnitData;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, BlueprintSetter=SetTeamType, Category="Unit|Setup") EBattleTeam TeamType = EBattleTeam::Player;
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Unit|Setup", meta=(ClampMin="1", ClampMax="2")) int32 StarLevel = 1;
@@ -105,6 +108,8 @@ public:
     UFUNCTION(BlueprintCallable, Category="Unit|Board") bool PlaceOnTile(ABoardTile* Tile);
     UFUNCTION(BlueprintCallable, Category="Unit|Board") bool SetWaitingPlacement(FVector Location);
     UFUNCTION(BlueprintCallable, Category="Unit|Board") bool SetPreparationPlacement(FTransform Transform, ABoardTile* Tile, EUnitPlacement NewPlacement);
+    UFUNCTION(BlueprintCallable, Category="Unit|Board") bool SetBoardManager(ABoardManager* Board);
+    UFUNCTION(BlueprintCallable, Category="Unit|Board") bool CancelBoardMove(int32 MoveId);
     UFUNCTION(BlueprintCallable, Category="Unit|Combat") void SetCombatRoster(const TArray<ABattleUnitBase*>& Units);
     UFUNCTION(BlueprintCallable, Category="Unit|Combat") void StartCombat();
     UFUNCTION(BlueprintCallable, Category="Unit|Combat") void StopCombat();
@@ -125,8 +130,10 @@ public:
     UFUNCTION(BlueprintPure, Category="Unit|Visual") float GetHealthBarHeight() const;
 
     // ReservedStep을 반환할 때에는 보드에서 이미 해당 타일을 예약한 상태여야 한다.
-    UFUNCTION(BlueprintImplementableEvent, Category="Unit|Board") EUnitPathResult RequestCombatStep(ABattleUnitBase* Target, int32 MoveId, ABoardTile*& NextTile);
-    UFUNCTION(BlueprintImplementableEvent, Category="Unit|Board") void MovementReservationReleased(ABoardTile* Tile, int32 MoveId, bool bCompleted);
+    UFUNCTION(BlueprintNativeEvent, Category="Unit|Board") EUnitPathResult RequestCombatStep(ABattleUnitBase* Target, int32 MoveId, ABoardTile*& NextTile);
+    UFUNCTION(BlueprintNativeEvent, Category="Unit|Board") void MovementReservationReleased(ABoardTile* Tile, int32 MoveId, bool bCompleted);
+    virtual EUnitPathResult RequestCombatStep_Implementation(ABattleUnitBase* Target, int32 MoveId, ABoardTile*& NextTile);
+    virtual void MovementReservationReleased_Implementation(ABoardTile* Tile, int32 MoveId, bool bCompleted);
     UFUNCTION(BlueprintImplementableEvent, Category="Unit|Visual") void ProjectileUpdated(const FUnitProjectileView& Projectile);
     UFUNCTION(BlueprintImplementableEvent, Category="Unit|Visual") void ProjectileRemoved(int32 ProjectileId, bool bHit);
 private:
@@ -180,6 +187,7 @@ private:
     bool bCombatStartedForRound = false;
     bool bCombatStartPending = false;
     bool bResetting = false;
+    bool bReleasingMove = false;
     FVector MoveStart = FVector::ZeroVector;
 
     void ClearVisuals();
