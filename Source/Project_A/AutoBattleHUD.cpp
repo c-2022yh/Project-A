@@ -47,7 +47,7 @@ void AAutoBattleHUD::DrawHUD()
     for (ABattleUnitBase* Unit : Mode->BattleUnits)
     {
         if (!IsValid(Unit) || !Unit->IsAlive()) continue;
-        const FVector Anchor = Unit->GetActorLocation() + FVector(0, 0, Unit->GetCapsuleComponent()->GetScaledCapsuleHalfHeight() + 45);
+        const FVector Anchor = Unit->GetActorLocation() + FVector(0, 0, Unit->GetHealthBarHeight());
         // Canvas 좌표에는 카메라 화면 바깥 검은 여백의 위치 보정이 포함되지 않는다.
         // 이 HUD를 그릴 때 사용하는 시점으로 월드 위치를 화면 좌표로 변환한다.
         const FVector Projected = Canvas->Project(Anchor);
@@ -56,7 +56,7 @@ void AAutoBattleHUD::DrawHUD()
         const FVector2D Screen(Projected.X, Projected.Y);
         const FLinearColor Color = Unit->TeamType == EBattleTeam::Player ? FLinearColor(0.1f, 0.55f, 1) : FLinearColor(1, 0.2f, 0.15f);
         DrawRect(FLinearColor::Black, Screen.X - 31, Screen.Y, 62, 9);
-        DrawRect(Color, Screen.X - 30, Screen.Y + 1, 60 * FMath::Clamp(Unit->CurrentHP / FMath::Max(1.0f, Unit->MaxHP), 0.0f, 1.0f), 7);
+        DrawRect(Color, Screen.X - 30, Screen.Y + 1, 60 * FMath::Clamp(Unit->CurrentHP / FMath::Max(1.0f, Unit->FinalStats.MaxHealth), 0.0f, 1.0f), 7);
         const FString Label = PC && PC->SelectedUnit == Unit ? TEXT("SELECTED")
             : Unit->TeamType == EBattleTeam::Player ? (Unit->bIsDeployed ? TEXT("ALLY") : TEXT("WAITING")) : TEXT("ENEMY");
         DrawText(Label, PC && PC->SelectedUnit == Unit ? FLinearColor::Yellow : Color, Screen.X - 30, Screen.Y - 18, nullptr, 0.8f);

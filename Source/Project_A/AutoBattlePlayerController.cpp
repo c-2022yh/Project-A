@@ -56,7 +56,7 @@ void AAutoBattlePlayerController::PlayerTick(float DeltaSeconds)
     if (IsValid(SelectedUnit) && SelectedUnit->IsAlive())
     {
         DrawDebugCircle(GetWorld(), SelectedUnit->GetActorLocation(),
-            SelectedUnit->GetCapsuleComponent()->GetScaledCapsuleRadius() * 1.4f,
+            SelectedUnit->GetSelectionRadius() * 1.4f,
             32, FColor::Yellow, false, -1, 0, 8, FVector::ForwardVector, FVector::RightVector, false);
     }
 }
