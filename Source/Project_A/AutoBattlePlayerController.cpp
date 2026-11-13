@@ -4,6 +4,7 @@
 #include "BoardTile.h"
 #include "Components/CapsuleComponent.h"
 #include "DrawDebugHelpers.h"
+#include "Engine/World.h"
 #include "GameFramework/HUD.h"
 #include "Kismet/GameplayStatics.h"
 
@@ -17,21 +18,121 @@ AAutoBattlePlayerController::AAutoBattlePlayerController()
 void AAutoBattlePlayerController::SelectUnit(ABattleUnitBase* Unit)
 {
     const AAutoBattleGameMode* Mode = Cast<AAutoBattleGameMode>(UGameplayStatics::GetGameMode(this));
-    if (!Mode || Mode->CurrentPhase != EGamePhase::Preparation || !Mode->bPreparationActive || !IsValid(Unit)
+    if (!Mode || !IsUnitPlacementPhaseActive() || !IsValid(Unit)
         || !Mode->BattleUnits.Contains(Unit) || Unit->TeamType != EBattleTeam::Player || !Unit->IsAlive())
     { ClearSelection(); return; }
     SelectedUnit = Unit;
 }
-void AAutoBattlePlayerController::ClearSelection() { SelectedUnit = nullptr; }
+void AAutoBattlePlayerController::ClearSelection()
+{
+    CancelUnitDrag();
+    SelectedUnit = nullptr;
+}
+
+bool AAutoBattlePlayerController::BeginUnitDrag(ABattleUnitBase* Unit)
+{
+    const AAutoBattleGameMode* Mode = Cast<AAutoBattleGameMode>(UGameplayStatics::GetGameMode(this));
+    float MouseX = 0.0f;
+    float MouseY = 0.0f;
+    if (!Mode || !IsUnitPlacementPhaseActive()
+        || IsPointerOverHUD() || !GetMousePosition(MouseX, MouseY))
+    {
+        return false;
+    }
+
+    CancelUnitDrag();
+    SelectUnit(Unit);
+    if (!IsValid(SelectedUnit)) return false;
+
+    UnitDragStartScreenPosition = FVector2D(MouseX, MouseY);
+    UnitDragStartTransform = SelectedUnit->GetActorTransform();
+    UnitDragSurfaceZ = IsValid(SelectedUnit->CurrentTile)
+        ? SelectedUnit->CurrentTile->GetSurfaceLocation().Z
+        : SelectedUnit->GetActorLocation().Z - SelectedUnit->GetCapsuleComponent()->GetScaledCapsuleHalfHeight() - 1.0f;
+    bUnitDragPending = true;
+    bIsUnitDragging = false;
+    return true;
+}
+
+bool AAutoBattlePlayerController::EndUnitDrag()
+{
+    if (!bUnitDragPending) return false;
+
+    const bool bWasDragging = bIsUnitDragging;
+    bUnitDragPending = false;
+    bIsUnitDragging = false;
+    if (!IsValid(SelectedUnit)) return false;
+
+    // A press and release without meaningful movement remains a normal selection click.
+    if (!bWasDragging) return false;
+
+    ABoardTile* DropTile = GetDragDropTileAtCursor();
+    SelectedUnit->SetActorTransform(UnitDragStartTransform, false, nullptr, ETeleportType::TeleportPhysics);
+    if (!IsValid(DropTile)) return false;
+    return PlaceSelectedUnitOnTile(DropTile);
+}
+
+void AAutoBattlePlayerController::CancelUnitDrag()
+{
+    if ((bUnitDragPending || bIsUnitDragging) && IsValid(SelectedUnit))
+    {
+        SelectedUnit->SetActorTransform(UnitDragStartTransform, false, nullptr, ETeleportType::TeleportPhysics);
+    }
+    bUnitDragPending = false;
+    bIsUnitDragging = false;
+}
+
 bool AAutoBattlePlayerController::PlaceSelectedUnitOnTile(ABoardTile* Tile)
 {
     AAutoBattleGameMode* Mode = Cast<AAutoBattleGameMode>(UGameplayStatics::GetGameMode(this));
-    if (!Mode || Mode->CurrentPhase != EGamePhase::Preparation || !Mode->bPreparationActive || !Mode->bEncounterReady
+    if (!Mode || !IsUnitPlacementPhaseActive() || !Mode->bEncounterReady
         || !IsValid(SelectedUnit) || !IsValid(Tile) || SelectedUnit->TeamType != EBattleTeam::Player) return false;
-    if (!SelectedUnit->bIsDeployed && Mode->GetDeployedPlayerCount() >= Mode->MaxBoardUnits)
-    { Mode->StatusMessage = TEXT("Deployment limit reached. Move an existing unit instead."); return false; }
-    if (!SelectedUnit->PlaceOnTile(Tile))
-    { Mode->StatusMessage = TEXT("Choose an empty player tile."); return false; }
+
+    if (Tile->OccupiedUnit && Tile->OccupiedUnit != SelectedUnit)
+    {
+        ABattleUnitBase* OtherUnit = Cast<ABattleUnitBase>(Tile->OccupiedUnit);
+        ABoardTile* PreviousTile = SelectedUnit->CurrentTile;
+        if (!IsValid(OtherUnit) || OtherUnit->TeamType != EBattleTeam::Player || !OtherUnit->IsAlive()
+            || OtherUnit->bInCombat || !IsValid(PreviousTile) || PreviousTile == Tile
+            || PreviousTile->OccupiedUnit != SelectedUnit || OtherUnit->CurrentTile != Tile)
+        {
+            Mode->StatusMessage = TEXT("Choose an empty player tile or another deployed ally.");
+            return false;
+        }
+
+        const FTransform SelectedStartTransform = SelectedUnit->GetActorTransform();
+        const FTransform OtherStartTransform = OtherUnit->GetActorTransform();
+        PreviousTile->ClearTile();
+        Tile->ClearTile();
+
+        const bool bOtherMoved = OtherUnit->PlaceOnTile(PreviousTile);
+        const bool bSelectedMoved = bOtherMoved && SelectedUnit->PlaceOnTile(Tile);
+        if (!bSelectedMoved)
+        {
+            if (IsValid(PreviousTile)) PreviousTile->ClearTile();
+            if (IsValid(Tile)) Tile->ClearTile();
+            OtherUnit->PlaceOnTile(Tile);
+            SelectedUnit->PlaceOnTile(PreviousTile);
+            OtherUnit->SetActorTransform(OtherStartTransform, false, nullptr, ETeleportType::TeleportPhysics);
+            SelectedUnit->SetActorTransform(SelectedStartTransform, false, nullptr, ETeleportType::TeleportPhysics);
+            Mode->StatusMessage = TEXT("Unit swap failed. Positions were restored.");
+            return false;
+        }
+    }
+    else
+    {
+        if (!SelectedUnit->bIsDeployed && Mode->GetDeployedPlayerCount() >= Mode->MaxBoardUnits)
+        {
+            Mode->StatusMessage = TEXT("Deployment limit reached. Move an existing unit instead.");
+            return false;
+        }
+        if (!SelectedUnit->PlaceOnTile(Tile))
+        {
+            Mode->StatusMessage = TEXT("Choose an empty player tile.");
+            return false;
+        }
+    }
+
     Mode->StatusMessage = TEXT("Unit placed. Select another unit or press Enter to start.");
     ClearSelection();
     return true;
@@ -39,20 +140,111 @@ bool AAutoBattlePlayerController::PlaceSelectedUnitOnTile(ABoardTile* Tile)
 bool AAutoBattlePlayerController::GetBoardClickHit(FHitResult& Hit)
 {
     Hit = FHitResult();
-    float X, Y;
-    if (!GetMousePosition(X, Y)) return false;
-    if (GetHUD() && GetHUD()->GetHitBoxAtCoordinates(FVector2D(X, Y), true)) return false;
+    if (IsPointerOverHUD()) return false;
     // Preserve complex tracing for the custom hex tile mesh.
     return GetHitResultUnderCursor(ECC_Visibility, true, Hit);
 }
+
+bool AAutoBattlePlayerController::IsPointerOverHUD() const
+{
+    float X = 0.0f;
+    float Y = 0.0f;
+    if (!GetMousePosition(X, Y)) return false;
+    return GetHUD() && GetHUD()->GetHitBoxAtCoordinates(FVector2D(X, Y), true) != nullptr;
+}
+
+bool AAutoBattlePlayerController::IsUnitPlacementPhaseActive() const
+{
+    const AAutoBattleGameMode* Mode = Cast<AAutoBattleGameMode>(UGameplayStatics::GetGameMode(this));
+    if (!Mode) return false;
+    if (Mode->CurrentPhase == EGamePhase::Preparation) return Mode->bPreparationActive;
+    // 보상 선택 페이즈가 아직 존재하지 않아, RoundClear를 유닛 이동 가능 페이즈로 임시 지정. 추후 변경 가능
+    return Mode->CurrentPhase == EGamePhase::RoundClear;
+}
+
+ABoardTile* AAutoBattlePlayerController::GetDragDropTileAtCursor(FHitResult* OutHit) const
+{
+    if (OutHit) *OutHit = FHitResult();
+    if (IsPointerOverHUD() || !IsValid(SelectedUnit)) return nullptr;
+
+    FVector RayOrigin;
+    FVector RayDirection;
+    if (!DeprojectMousePositionToWorld(RayOrigin, RayDirection)) return nullptr;
+
+    FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(UnitDragDrop), true);
+    QueryParams.AddIgnoredActor(SelectedUnit);
+    if (const AAutoBattleGameMode* Mode = Cast<AAutoBattleGameMode>(UGameplayStatics::GetGameMode(this)))
+    {
+        // This trace answers only which board tile is under the cursor; units must not occlude that tile.
+        for (ABattleUnitBase* Unit : Mode->BattleUnits)
+        {
+            if (IsValid(Unit)) QueryParams.AddIgnoredActor(Unit);
+        }
+    }
+    FHitResult Hit;
+    if (!GetWorld() || !GetWorld()->LineTraceSingleByChannel(
+        Hit, RayOrigin, RayOrigin + RayDirection * 100000.0f, ECC_Visibility, QueryParams))
+    {
+        return nullptr;
+    }
+
+    if (OutHit) *OutHit = Hit;
+    return Cast<ABoardTile>(Hit.GetActor());
+}
+
+void AAutoBattlePlayerController::UpdateDraggedUnitLocation()
+{
+    if (!IsValid(SelectedUnit)) return;
+
+    FVector RayOrigin;
+    FVector RayDirection;
+    if (!DeprojectMousePositionToWorld(RayOrigin, RayDirection) || FMath::IsNearlyZero(RayDirection.Z)) return;
+
+    const float RayDistance = (UnitDragSurfaceZ - RayOrigin.Z) / RayDirection.Z;
+    if (!FMath::IsFinite(RayDistance) || RayDistance < 0.0f) return;
+
+    FVector NewLocation = RayOrigin + RayDirection * RayDistance;
+    NewLocation.Z += SelectedUnit->GetCapsuleComponent()->GetScaledCapsuleHalfHeight() + 1.0f
+        + FMath::Max(0.0f, UnitDragHeightOffset);
+    SelectedUnit->SetActorLocation(NewLocation, false, nullptr, ETeleportType::TeleportPhysics);
+}
+
 void AAutoBattlePlayerController::PlayerTick(float DeltaSeconds)
 {
     Super::PlayerTick(DeltaSeconds);
     const AAutoBattleGameMode* Mode = Cast<AAutoBattleGameMode>(UGameplayStatics::GetGameMode(this));
     HoveredTile = nullptr;
-    if (!Mode || Mode->CurrentPhase != EGamePhase::Preparation) { ClearSelection(); return; }
+    if (!Mode || !IsUnitPlacementPhaseActive())
+    {
+        ClearSelection();
+        return;
+    }
+
+    if (bUnitDragPending)
+    {
+        float MouseX = 0.0f;
+        float MouseY = 0.0f;
+        if (!IsValid(SelectedUnit) || !SelectedUnit->IsAlive())
+        {
+            CancelUnitDrag();
+        }
+        else if (GetMousePosition(MouseX, MouseY)
+            && (FVector2D(MouseX, MouseY) - UnitDragStartScreenPosition).Size() >= FMath::Max(0.0f, UnitDragThreshold))
+        {
+            bIsUnitDragging = true;
+        }
+        if (bIsUnitDragging) UpdateDraggedUnitLocation();
+    }
+
     FHitResult Hit;
-    if (GetHitResultUnderCursor(ECC_Visibility, true, Hit)) HoveredTile = Cast<ABoardTile>(Hit.GetActor());
+    if (bIsUnitDragging)
+    {
+        HoveredTile = GetDragDropTileAtCursor(&Hit);
+    }
+    else if (GetHitResultUnderCursor(ECC_Visibility, true, Hit))
+    {
+        HoveredTile = Cast<ABoardTile>(Hit.GetActor());
+    }
     if (IsValid(SelectedUnit) && SelectedUnit->IsAlive())
     {
         DrawDebugCircle(GetWorld(), SelectedUnit->GetActorLocation(),
