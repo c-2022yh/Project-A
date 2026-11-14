@@ -22,6 +22,7 @@ public:
     virtual bool DoesSupportWorldType(EWorldType::Type Type) const override;
 
     virtual void OnWorldBeginPlay(UWorld& InWorld) override;
+    bool IsOverButton(FVector2D ViewportPosition) const;
 
 private:
     enum class EAction : uint8 { Buy, Reroll, Lock, Equip, Unequip, Sell, Reward, InventoryPage };
@@ -35,6 +36,7 @@ private:
         FGuid Unit;
         FName Item;
         int32 Revision = 0;
+        bool bEnabled = true;
     };
 
     TWeakObjectPtr<AShopTransactionManager> Transactions;

@@ -101,7 +101,7 @@ void UShopPanel::AddButton(AHUD& HUD, const FString& Label, const FButton& Butto
     HUD.DrawText(Text, bEnabled ? FLinearColor::White : Muted, P.X + 6, P.Y + (S.Y - TextHeight) / 2);
     const int32 Index = Buttons.Add(Button);
     HUD.AddHitBox(P, S, FName(TEXT("ShopPanel"), Index + 1), true, 10);
-    if (!bEnabled) Buttons[Index].Size = FVector2D::ZeroVector;
+    Buttons[Index].bEnabled = bEnabled;
 }
 
 void UShopPanel::Draw(AHUD* HUD, UCanvas* Canvas)
@@ -152,7 +152,7 @@ void UShopPanel::Draw(AHUD* HUD, UCanvas* Canvas)
     if (PC->GetMousePosition(X, Y))
     {
         const FVector2D LocalMouse = FVector2D(X, Y) - ViewOrigin;
-        if (HUD->GetHitBoxAtCoordinates(FVector2D(X, Y), true)) return;
+        if (IsOverButton(FVector2D(X, Y)) || HUD->GetHitBoxAtCoordinates(FVector2D(X, Y), true)) return;
         const FGuid Hovered = Manager->Roster->GetHoveredUnit();
         if (Hovered.IsValid()) DrawProfile(*HUD, *Manager, Hovered, LocalMouse + FVector2D(12, -120));
     }
@@ -285,11 +285,29 @@ void UShopPanel::DrawProfile(AHUD& HUD, const AShopTransactionManager& Manager, 
     HUD.DrawText(FString::Join(Items, TEXT(" / ")).Left(40), Muted, X + 8, Y + 65, nullptr, 0.85f);
 }
 
+bool UShopPanel::IsOverButton(FVector2D ViewportPosition) const
+{
+    const FVector2D LocalPosition = ViewportPosition - ViewOrigin;
+    return Buttons.ContainsByPredicate([LocalPosition](const FButton& Button)
+    {
+        const FVector2D Offset = LocalPosition - Button.Position;
+        return Offset.X >= 0 && Offset.Y >= 0 && Offset.X < Button.Size.X && Offset.Y < Button.Size.Y;
+    });
+}
+
 void UShopPanel::HandleInput(const FInputKeyEventArgs& Event)
 {
+    if (Event.Event != IE_Pressed && Event.Event != IE_DoubleClick) return;
+
     AShopTransactionManager* Manager = Transactions.Get();
     AHUD* HUD = ActiveHUD.Get();
-    if (!Manager || !Manager->IsConfigured() || !HUD || Event.Key != EKeys::LeftMouseButton || (Event.Event != IE_Pressed && Event.Event != IE_DoubleClick)) return;
+    if (!Manager || !Manager->IsConfigured() || !HUD) return;
+    if (Event.Key == EKeys::RightMouseButton)
+    {
+        Selected.Invalidate();
+        return;
+    }
+    if (Event.Key != EKeys::LeftMouseButton) return;
 
     float X, Y;
     APlayerController* PC = HUD->GetOwningPlayerController();
@@ -297,14 +315,15 @@ void UShopPanel::HandleInput(const FInputKeyEventArgs& Event)
     for (int32 Index = Buttons.Num() - 1; Index >= 0; --Index)
     {
         const FButton Button = Buttons[Index];
-        if (Button.Size == FVector2D::ZeroVector) continue;
+
         const FVector2D Offset = FVector2D(X, Y) - ViewOrigin - Button.Position;
         if (Offset.X < 0 || Offset.Y < 0 || Offset.X >= Button.Size.X || Offset.Y >= Button.Size.Y) continue;
-        RunAction(Button, *Manager);
+        if (Button.bEnabled && (!Button.Unit.IsValid() || Button.Unit == Selected))
+            RunAction(Button, *Manager);
         return;
     }
 
-    if (HUD->GetHitBoxAtCoordinates(FVector2D(X, Y), true)) return;
+    if (IsOverButton(FVector2D(X, Y)) || HUD->GetHitBoxAtCoordinates(FVector2D(X, Y), true)) return;
     const ARosterManager& Roster = *Manager->Roster;
     const FGuid Hovered = Roster.GetHoveredUnit();
     FRosterUnit Unit;

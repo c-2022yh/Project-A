@@ -3,6 +3,9 @@
 #include "../BenchManager.h"
 #include "../RosterManager.h"
 #include "../ShopManager.h"
+#include "../ShopPanel.h"
+#include "Engine/GameViewportClient.h"
+#include "InputKeyEventArgs.h"
 #include "../ShopTransactionManager.h"
 #include "Camera/CameraActor.h"
 #include "Camera/CameraComponent.h"
@@ -48,12 +51,12 @@ void AShopTestGameMode::BeginPlay()
     Cube = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cube.Cube"));
     SpawnCube(FVector(0, 0, -48), FVector(14, 4, 0.4));
     for (int32 Slot = 0; Slot < UBenchManager::SlotCount; ++Slot)
-        SpawnCube(BenchLocation(Slot) - FVector(0, 0, 16), FVector(1.45, 1.6, 0.2));
+        BenchTiles.Add(SpawnCube(BenchLocation(Slot) - FVector(0, 0, 16), FVector(1.45, 1.6, 0.2)));
 
     auto* Shop = GetWorld()->SpawnActor<AShopManager>();
     auto* Roster = GetWorld()->SpawnActor<ARosterManager>();
     auto* Items = GetWorld()->SpawnActor<AItemManager>();
-    auto* Transactions = GetWorld()->SpawnActor<AShopTransactionManager>();
+    Transactions = GetWorld()->SpawnActor<AShopTransactionManager>();
     if (!Shop || !Roster || !Items || !Transactions) return;
 
     Shop->StartingGold = 20;
@@ -65,7 +68,55 @@ void AShopTestGameMode::BeginPlay()
     Transactions->Shop = Shop;
     Transactions->Roster = Roster;
     Transactions->Items = Items;
-    ensure(Transactions->EnterPreparation(1, 2));
+    if (ensure(Transactions->EnterPreparation(1, 2)))
+    {
+        InputViewport = GetWorld()->GetGameViewport();
+        if (InputViewport.IsValid())
+            InputHandle = InputViewport->OnInputKey().AddUObject(this, &AShopTestGameMode::HandleBenchClick);
+    }
+}
+
+void AShopTestGameMode::EndPlay(const EEndPlayReason::Type Reason)
+{
+    if (InputViewport.IsValid()) InputViewport->OnInputKey().Remove(InputHandle);
+    Super::EndPlay(Reason);
+}
+
+void AShopTestGameMode::HandleBenchClick(const FInputKeyEventArgs& Event)
+{
+    if (!IsValid(Transactions) || (Event.Event != IE_Pressed && Event.Event != IE_DoubleClick)) return;
+    if (Event.Key == EKeys::RightMouseButton)
+    {
+        SelectedPiece.Invalidate();
+        return;
+    }
+    if (Event.Key != EKeys::LeftMouseButton) return;
+
+    APlayerController* Player = GetWorld()->GetFirstPlayerController();
+    float X, Y;
+    if (!Player || !Player->GetMousePosition(X, Y)) return;
+    const UShopPanel* Panel = GetWorld()->GetSubsystem<UShopPanel>();
+    if (Panel && Panel->IsOverButton(FVector2D(X, Y))) return;
+
+    FHitResult Hit;
+    if (!Player->GetHitResultUnderCursor(ECC_Visibility, false, Hit))
+    {
+        SelectedPiece.Invalidate();
+        return;
+    }
+    const FGuid ClickedPiece = FindPiece(Hit.GetActor());
+    if (!Pieces.Contains(SelectedPiece))
+    {
+        SelectedPiece = ClickedPiece;
+        return;
+    }
+
+    const int32 Slot = ClickedPiece.IsValid()
+        ? GetUnitPosition_Implementation(ClickedPiece).Column
+        : BenchTiles.IndexOfByPredicate([&Hit](const AStaticMeshActor* Tile) { return Tile == Hit.GetActor(); });
+    if (Slot == INDEX_NONE
+        || Transactions->RequestMoveToBench(SelectedPiece, Slot) == ETransactionResult::Success)
+        SelectedPiece.Invalidate();
 }
 
 AStaticMeshActor* AShopTestGameMode::SpawnCube(FVector Position, FVector Scale)
@@ -94,12 +145,15 @@ FGuid AShopTestGameMode::GetHoveredUnit_Implementation() const
 {
     APlayerController* Player = GetWorld()->GetFirstPlayerController();
     FHitResult Hit;
-    if (Player && Player->GetHitResultUnderCursor(ECC_Visibility, false, Hit))
-        for (const auto& Entry : Pieces)
-            if (Entry.Value == Hit.GetActor()) return Entry.Key;
-    return {};
+    return Player && Player->GetHitResultUnderCursor(ECC_Visibility, false, Hit) ? FindPiece(Hit.GetActor()) : FGuid();
 }
 
+FGuid AShopTestGameMode::FindPiece(const AActor* Actor) const
+{
+    for (const auto& Entry : Pieces)
+        if (Entry.Value == Actor) return Entry.Key;
+    return {};
+}
 bool AShopTestGameMode::ApplyUnitChanges_Implementation(const TArray<FRosterUnitChange>& Changes, EShopPhase Phase, int32 Limit)
 {
     TMap<FGuid, AStaticMeshActor*> NewPieces;
@@ -138,6 +192,7 @@ bool AShopTestGameMode::ApplyUnitChanges_Implementation(const TArray<FRosterUnit
         {
             Piece->Destroy();
             Pieces.Remove(Id);
+            if (SelectedPiece == Id) SelectedPiece.Invalidate();
             continue;
         }
         const double Scale = Change.StarVisualScale;

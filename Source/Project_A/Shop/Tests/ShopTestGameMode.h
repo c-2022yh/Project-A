@@ -5,6 +5,9 @@
 #include "ShopTestGameMode.generated.h"
 
 class UTestPlacement;
+class AShopTransactionManager;
+class UGameViewportClient;
+struct FInputKeyEventArgs;
 class AStaticMeshActor;
 class UStaticMesh;
 
@@ -23,6 +26,7 @@ public:
 
 protected:
     virtual void BeginPlay() override;
+    virtual void EndPlay(const EEndPlayReason::Type Reason) override;
 
 private:
     UPROPERTY()
@@ -33,6 +37,19 @@ private:
 
     UPROPERTY()
     TMap<FGuid, TObjectPtr<AStaticMeshActor>> Pieces;
+
+    UPROPERTY()
+    TObjectPtr<AShopTransactionManager> Transactions;
+
+    UPROPERTY()
+    TArray<TObjectPtr<AStaticMeshActor>> BenchTiles;
+
+    TWeakObjectPtr<UGameViewportClient> InputViewport;
+    FDelegateHandle InputHandle;
+    FGuid SelectedPiece;
+
+    FGuid FindPiece(const AActor* Actor) const;
+    void HandleBenchClick(const FInputKeyEventArgs& Event);
 
     AStaticMeshActor* SpawnCube(FVector Position, FVector Scale);
 };
