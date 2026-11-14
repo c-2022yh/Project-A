@@ -11,7 +11,7 @@ ABoardTile::ABoardTile()
     TileMesh->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
 }
 void ABoardTile::BeginPlay() { Super::BeginPlay(); }
-bool ABoardTile::CanPlaceUnit() const { return !IsValid(OccupiedUnit); }
+bool ABoardTile::CanPlaceUnit() const { return !bOccupied && !IsValid(OccupiedUnit); }
 FVector ABoardTile::GetSurfaceLocation() const
 {
     FVector Location = GetActorLocation();
@@ -24,7 +24,8 @@ FVector ABoardTile::GetSurfaceLocation() const
 }
 void ABoardTile::SetOccupiedUnit(AActor* Unit)
 {
-    if (!IsValid(Unit) || (IsValid(OccupiedUnit) && OccupiedUnit != Unit)) return;
+    if (!IsValid(Unit) || bOccupied != IsValid(OccupiedUnit)
+        || (bOccupied && OccupiedUnit != Unit)) return;
     if (ABattleUnitBase* BattleUnit = Cast<ABattleUnitBase>(Unit))
     {
         if (IsValid(BattleUnit->CurrentTile) && BattleUnit->CurrentTile != this) BattleUnit->CurrentTile->ClearTile();
