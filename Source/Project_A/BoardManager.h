@@ -5,6 +5,7 @@
 #include "BoardManager.generated.h"
 
 class ABoardTile;
+class ABattleUnitBase;
 class UMaterialInterface;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FBoardGeneratedEvent);
@@ -99,6 +100,10 @@ public:
 
     UFUNCTION(BlueprintPure, Category = "Board")
     TArray<ABoardTile*> GetEnemyTiles() const;
+
+    // Authoritative player drop-placement entry point. Selection and drag input stay in the PlayerController.
+    UFUNCTION(BlueprintCallable, Category = "Board|Placement")
+    bool TryPlaceUnitOnTile(ABattleUnitBase* Unit, ABoardTile* TargetTile);
 
 	
 };

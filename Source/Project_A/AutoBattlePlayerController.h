@@ -3,6 +3,7 @@
 #include "GameFramework/PlayerController.h"
 #include "AutoBattlePlayerController.generated.h"
 class ABoardTile;
+class ABoardManager;
 class ABattleUnitBase;
 UCLASS()
 class PROJECT_A_API AAutoBattlePlayerController : public APlayerController
@@ -59,6 +60,7 @@ private:
 
     bool IsPointerOverHUD() const;
     bool IsUnitPlacementPhaseActive() const;
+    ABoardManager* GetBoardManager() const;
     ABoardTile* GetDragDropTileAtCursor(FHitResult* OutHit = nullptr) const;
     void UpdateDraggedUnitLocation();
 };

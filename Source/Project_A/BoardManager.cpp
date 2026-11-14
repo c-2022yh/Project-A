@@ -1,8 +1,11 @@
 #include "BoardManager.h"
+#include "AutoBattleGameMode.h"
+#include "BattleUnitBase.h"
 #include "BoardTile.h"
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/World.h"
+#include "Kismet/GameplayStatics.h"
 #include "Materials/MaterialInterface.h"
 
 ABoardManager::ABoardManager()
@@ -151,4 +154,102 @@ TArray<ABoardTile*> ABoardManager::GetEnemyTiles() const
     for (ABoardTile* Tile : Tiles)
         if (IsValid(Tile) && Tile->TeamType == EBoardTileTeam::Enemy) Result.Add(Tile);
     return Result;
+}
+
+bool ABoardManager::TryPlaceUnitOnTile(ABattleUnitBase* Unit, ABoardTile* TargetTile)
+{
+    AAutoBattleGameMode* Mode = Cast<AAutoBattleGameMode>(UGameplayStatics::GetGameMode(this));
+    const bool bPlacementPhaseActive = Mode
+        && (Mode->CurrentPhase == EGamePhase::Preparation
+            ? Mode->bPreparationActive
+            : Mode->CurrentPhase == EGamePhase::RoundClear);
+    if (!Mode || !bPlacementPhaseActive || !Mode->bEncounterReady
+        || !IsValid(Unit) || !Mode->BattleUnits.Contains(Unit)
+        || Unit->TeamType != EBattleTeam::Player || !Unit->IsAlive() || Unit->bInCombat
+        || !IsValid(TargetTile) || !Tiles.Contains(TargetTile)
+        || TargetTile->TeamType != EBoardTileTeam::Player)
+    {
+        if (Mode) Mode->StatusMessage = TEXT("Choose a valid player tile during a placement phase.");
+        return false;
+    }
+
+    ABoardTile* PreviousTile = Unit->CurrentTile;
+    if (Unit->bIsDeployed)
+    {
+        if (!IsValid(PreviousTile) || !Tiles.Contains(PreviousTile)
+            || PreviousTile->TeamType != EBoardTileTeam::Player
+            || PreviousTile->OccupiedUnit != Unit || !PreviousTile->bOccupied)
+        {
+            Mode->StatusMessage = TEXT("Unit placement state is inconsistent. Positions were not changed.");
+            return false;
+        }
+    }
+    else if (IsValid(PreviousTile))
+    {
+        Mode->StatusMessage = TEXT("Unit placement state is inconsistent. Positions were not changed.");
+        return false;
+    }
+
+    if (TargetTile == PreviousTile)
+    {
+        Mode->StatusMessage = TEXT("Unit is already on that tile.");
+        return true;
+    }
+
+    const bool bTargetHasOccupant = IsValid(TargetTile->OccupiedUnit);
+    if (TargetTile->bOccupied != bTargetHasOccupant)
+    {
+        Mode->StatusMessage = TEXT("Target tile occupancy is inconsistent. Positions were not changed.");
+        return false;
+    }
+
+    if (bTargetHasOccupant)
+    {
+        ABattleUnitBase* OtherUnit = Cast<ABattleUnitBase>(TargetTile->OccupiedUnit);
+        if (!IsValid(OtherUnit) || !Mode->BattleUnits.Contains(OtherUnit) || OtherUnit == Unit
+            || OtherUnit->TeamType != EBattleTeam::Player || !OtherUnit->IsAlive()
+            || OtherUnit->bInCombat || !OtherUnit->bIsDeployed
+            || OtherUnit->CurrentTile != TargetTile || !TargetTile->bOccupied
+            || !IsValid(PreviousTile) || PreviousTile == TargetTile
+            || PreviousTile->OccupiedUnit != Unit || !PreviousTile->bOccupied)
+        {
+            Mode->StatusMessage = TEXT("Choose an empty player tile or another deployed ally.");
+            return false;
+        }
+
+        const FTransform UnitStartTransform = Unit->GetActorTransform();
+        const FTransform OtherStartTransform = OtherUnit->GetActorTransform();
+        PreviousTile->ClearTile();
+        TargetTile->ClearTile();
+
+        const bool bOtherMoved = OtherUnit->PlaceOnTile(PreviousTile);
+        const bool bUnitMoved = bOtherMoved && Unit->PlaceOnTile(TargetTile);
+        if (!bUnitMoved)
+        {
+            if (IsValid(PreviousTile)) PreviousTile->ClearTile();
+            if (IsValid(TargetTile)) TargetTile->ClearTile();
+            OtherUnit->PlaceOnTile(TargetTile);
+            Unit->PlaceOnTile(PreviousTile);
+            OtherUnit->SetActorTransform(OtherStartTransform, false, nullptr, ETeleportType::TeleportPhysics);
+            Unit->SetActorTransform(UnitStartTransform, false, nullptr, ETeleportType::TeleportPhysics);
+            Mode->StatusMessage = TEXT("Unit swap failed. Positions were restored.");
+            return false;
+        }
+    }
+    else
+    {
+        if (!Unit->bIsDeployed && Mode->GetDeployedPlayerCount() >= Mode->MaxBoardUnits)
+        {
+            Mode->StatusMessage = TEXT("Deployment limit reached. Move an existing unit instead.");
+            return false;
+        }
+        if (!Unit->PlaceOnTile(TargetTile))
+        {
+            Mode->StatusMessage = TEXT("Choose an empty player tile.");
+            return false;
+        }
+    }
+
+    Mode->StatusMessage = TEXT("Unit placed. Select another unit or press Enter to start.");
+    return true;
 }

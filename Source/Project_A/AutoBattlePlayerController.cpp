@@ -1,6 +1,7 @@
 #include "AutoBattlePlayerController.h"
 #include "AutoBattleGameMode.h"
 #include "BattleUnitBase.h"
+#include "BoardManager.h"
 #include "BoardTile.h"
 #include "Components/CapsuleComponent.h"
 #include "DrawDebugHelpers.h"
@@ -84,58 +85,17 @@ void AAutoBattlePlayerController::CancelUnitDrag()
 
 bool AAutoBattlePlayerController::PlaceSelectedUnitOnTile(ABoardTile* Tile)
 {
-    AAutoBattleGameMode* Mode = Cast<AAutoBattleGameMode>(UGameplayStatics::GetGameMode(this));
-    if (!Mode || !IsUnitPlacementPhaseActive() || !Mode->bEncounterReady
-        || !IsValid(SelectedUnit) || !IsValid(Tile) || SelectedUnit->TeamType != EBattleTeam::Player) return false;
-
-    if (Tile->OccupiedUnit && Tile->OccupiedUnit != SelectedUnit)
-    {
-        ABattleUnitBase* OtherUnit = Cast<ABattleUnitBase>(Tile->OccupiedUnit);
-        ABoardTile* PreviousTile = SelectedUnit->CurrentTile;
-        if (!IsValid(OtherUnit) || OtherUnit->TeamType != EBattleTeam::Player || !OtherUnit->IsAlive()
-            || OtherUnit->bInCombat || !IsValid(PreviousTile) || PreviousTile == Tile
-            || PreviousTile->OccupiedUnit != SelectedUnit || OtherUnit->CurrentTile != Tile)
-        {
-            Mode->StatusMessage = TEXT("Choose an empty player tile or another deployed ally.");
-            return false;
-        }
-
-        const FTransform SelectedStartTransform = SelectedUnit->GetActorTransform();
-        const FTransform OtherStartTransform = OtherUnit->GetActorTransform();
-        PreviousTile->ClearTile();
-        Tile->ClearTile();
-
-        const bool bOtherMoved = OtherUnit->PlaceOnTile(PreviousTile);
-        const bool bSelectedMoved = bOtherMoved && SelectedUnit->PlaceOnTile(Tile);
-        if (!bSelectedMoved)
-        {
-            if (IsValid(PreviousTile)) PreviousTile->ClearTile();
-            if (IsValid(Tile)) Tile->ClearTile();
-            OtherUnit->PlaceOnTile(Tile);
-            SelectedUnit->PlaceOnTile(PreviousTile);
-            OtherUnit->SetActorTransform(OtherStartTransform, false, nullptr, ETeleportType::TeleportPhysics);
-            SelectedUnit->SetActorTransform(SelectedStartTransform, false, nullptr, ETeleportType::TeleportPhysics);
-            Mode->StatusMessage = TEXT("Unit swap failed. Positions were restored.");
-            return false;
-        }
-    }
-    else
-    {
-        if (!SelectedUnit->bIsDeployed && Mode->GetDeployedPlayerCount() >= Mode->MaxBoardUnits)
-        {
-            Mode->StatusMessage = TEXT("Deployment limit reached. Move an existing unit instead.");
-            return false;
-        }
-        if (!SelectedUnit->PlaceOnTile(Tile))
-        {
-            Mode->StatusMessage = TEXT("Choose an empty player tile.");
-            return false;
-        }
-    }
-
-    Mode->StatusMessage = TEXT("Unit placed. Select another unit or press Enter to start.");
+	if (!IsValid(SelectedUnit) || !IsValid(Tile)) return false;
+	ABoardManager* Board = GetBoardManager();
+	if (!IsValid(Board) || !Board->TryPlaceUnitOnTile(SelectedUnit, Tile)) return false;
     ClearSelection();
     return true;
+}
+
+ABoardManager* AAutoBattlePlayerController::GetBoardManager() const
+{
+	const AAutoBattleGameMode* Mode = Cast<AAutoBattleGameMode>(UGameplayStatics::GetGameMode(this));
+	return IsValid(Mode) ? Mode->BoardManager.Get() : nullptr;
 }
 bool AAutoBattlePlayerController::GetBoardClickHit(FHitResult& Hit)
 {
