@@ -64,6 +64,7 @@ public:
 	//타일에 유닛 배치 가능 여부를 반환
     UFUNCTION(BlueprintCallable, Category = "Tile")
     bool CanPlaceUnit() const;
+    UFUNCTION(BlueprintPure, Category="Tile") bool HasConsistentOccupancy() const;
 
     UFUNCTION(BlueprintPure, Category = "Tile")
     FVector GetSurfaceLocation() const;

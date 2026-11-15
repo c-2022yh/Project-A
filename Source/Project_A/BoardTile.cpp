@@ -12,7 +12,8 @@ ABoardTile::ABoardTile()
     TileMesh->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
 }
 void ABoardTile::BeginPlay() { Super::BeginPlay(); }
-bool ABoardTile::CanPlaceUnit() const { return !bBlocksMovement && !IsValid(OccupiedUnit) && !IsReserved(); }
+bool ABoardTile::CanPlaceUnit() const { return HasConsistentOccupancy() && !bOccupied && !bBlocksMovement && !IsReserved(); }
+bool ABoardTile::HasConsistentOccupancy() const { return bOccupied == IsValid(OccupiedUnit); }
 bool ABoardTile::IsReserved() const { return IsValid(ReservedUnit); }
 bool ABoardTile::IsReservedFor(ABattleUnitBase* Unit, int32 MoveId) const
 {
@@ -30,7 +31,7 @@ FVector ABoardTile::GetSurfaceLocation() const
 }
 void ABoardTile::SetOccupiedUnit(AActor* Unit)
 {
-    if (!IsValid(Unit) || bBlocksMovement || IsReserved() || (IsValid(OccupiedUnit) && OccupiedUnit != Unit)) return;
+    if (!IsValid(Unit) || !HasConsistentOccupancy() || bBlocksMovement || IsReserved() || (IsValid(OccupiedUnit) && OccupiedUnit != Unit)) return;
     if (IsValid(OwningBoard))
     {
         if (ABattleUnitBase* BattleUnit = Cast<ABattleUnitBase>(Unit)) { OwningBoard->TryPlaceUnit(BattleUnit, this); return; }
