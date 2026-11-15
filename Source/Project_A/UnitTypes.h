@@ -220,7 +220,7 @@ struct PROJECT_A_API FUnitDamageRequest
     UPROPERTY(BlueprintReadWrite) FName SkillId;
     UPROPERTY(BlueprintReadWrite) int32 ActionId = 0;
     // 동일 요청이 재전달돼도 피해를 중복 적용하지 않는 ID.
-    UPROPERTY(BlueprintReadWrite) FGuid DamageId = FGuid::NewGuid();
+    UPROPERTY(BlueprintReadWrite, meta=(IgnoreForMemberInitializationTest)) FGuid DamageId = FGuid::NewGuid();
     UPROPERTY(BlueprintReadWrite) int32 TriggerDepth = 0;
     UPROPERTY(BlueprintReadWrite) TArray<FName> TriggerChain;
     // 발사 시점의 공격 측 계산값. 방어·감소·보호막 계산은 대상의 공통 경로에서 수행한다.

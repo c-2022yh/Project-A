@@ -27,6 +27,8 @@ struct ABoardManager::FUnitPlacementSnapshot
     ABoardTile* Tile = nullptr;
     ABenchTile* BenchSlot = nullptr;
     FTransform Transform = FTransform::Identity;
+    FTransform PreparationTransform = FTransform::Identity;
+    EUnitPlacement Placement = EUnitPlacement::Unplaced;
     bool bWasDeployed = false;
 };
 
@@ -910,6 +912,8 @@ bool ABoardManager::CaptureUnitPlacement(ABattleUnitBase* Unit, FUnitPlacementSn
 
     OutPlacement.Unit = Unit;
     OutPlacement.Transform = Unit->GetActorTransform();
+    OutPlacement.PreparationTransform = Unit->PreparationTransform;
+    OutPlacement.Placement = Unit->Placement;
     OutPlacement.bWasDeployed = Unit->bIsDeployed;
     return true;
 }
@@ -1011,9 +1015,9 @@ bool ABoardManager::MoveOrSwapUnits(const FUnitPlacementSnapshot& Source, ABoard
         if (!IsValid(Saved.Unit) || (Saved.Tile && !IsValid(Saved.Tile))
             || (Saved.BenchSlot && !IsValid(Saved.BenchSlot))) return false;
         if (IsValid(Saved.Unit->CurrentTile) && Saved.Unit->CurrentTile->OccupiedUnit != Saved.Unit) return false;
-        Saved.Unit->bIsDeployed = Saved.bWasDeployed;
-        if (Saved.Tile) Saved.Tile->SetOccupiedUnit(Saved.Unit);
-        else if (Saved.BenchSlot) Saved.BenchSlot->SetOccupiedUnit(Saved.Unit);
+        // Restore logical placement as well as links and visual transform after a failed swap.
+        if (!Saved.Unit->SetPreparationPlacement(Saved.PreparationTransform, Saved.Tile, Saved.Placement)) return false;
+        if (Saved.BenchSlot) Saved.BenchSlot->SetOccupiedUnit(Saved.Unit);
         const bool bTransformRestored = Saved.Unit->SetActorTransform(
             Saved.Transform, false, nullptr, ETeleportType::TeleportPhysics);
         FString Reason;

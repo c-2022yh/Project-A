@@ -6,7 +6,7 @@
 #include "UnitPlacement.generated.h"
 
 // Implemented by the integration layer using the board and combat teams' APIs.
-UINTERFACE(BlueprintType, Blueprintable)
+UINTERFACE(BlueprintType, Blueprintable, meta=(ScriptName="ShopUnitPlacement"))
 class PROJECT_A_API UUnitPlacement : public UInterface
 {
     GENERATED_BODY()
