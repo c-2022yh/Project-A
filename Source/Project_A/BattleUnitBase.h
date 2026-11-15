@@ -159,6 +159,10 @@ private:
         TArray<float> EffectValues;
     };
     struct FAttackEnhancement { FName Id; float Multiplier = 1.f; float Flat = 0.f; float Remaining = 0.f; };
+    FUnitProjectileView MakeProjectileView(const FPendingProjectile& Projectile) const;
+#if WITH_DEV_AUTOMATION_TESTS
+    friend class FUnitProjectileViewTest;
+#endif
     UPROPERTY(Transient) TArray<TObjectPtr<ABattleUnitBase>> CombatRoster;
     UPROPERTY(Transient) TObjectPtr<ABoardTile> PreparationTile = nullptr;
     UPROPERTY(Transient) TObjectPtr<ABoardTile> ReservedTile = nullptr;

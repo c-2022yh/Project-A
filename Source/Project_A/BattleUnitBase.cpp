@@ -16,6 +16,13 @@ namespace
     float Safe(float Value, float Fallback = 0.f) { return FMath::IsFinite(Value) ? Value : Fallback; }
     float Positive(float Value) { return FMath::Max(0.f, Safe(Value)); }
     float Fraction(float Value) { return FMath::Clamp(Safe(Value), 0.f, 1.f); }
+    void FaceLocation(AActor& Actor, const FVector& Location)
+    {
+        // 액터의 논리적 정면(+X)만 돌린다. 모델 정면 보정은 DT의 VisualTransform을 유지한다.
+        FVector Direction = Location - Actor.GetActorLocation();
+        Direction.Z = 0.f;
+        if (!Direction.IsNearlyZero()) Actor.SetActorRotation(Direction.Rotation());
+    }
     float StarMultiplier(const TArray<float>& Values, int32 Star)
     {
         return Star == 1 ? 1.f : (Values.IsValidIndex(1) ? Positive(Values[1]) : 1.8f);
@@ -802,6 +809,8 @@ bool ABattleUnitBase::TryBasicAttack()
 {
     if (!bInCombat || !IsAlive() || IsStunned() || ActionState != EUnitActionState::Idle || AttackCooldown > 0.f
         || FinalStats.AttackSpeed <= 0.f || !IsEnemyTarget(CurrentTarget) || !IsInRange(CurrentTarget, FinalStats.AttackRange)) return false;
+    // 이동 없이 공격하거나 타깃이 바뀌어도 모션/공격 시작 이벤트 전에 적을 바라본다.
+    FaceLocation(*this, CurrentTarget->GetActorLocation());
     ActiveActionId = ++ActionSequence; ActiveSkillIndex = INDEX_NONE; ActionTarget = CurrentTarget;
     bActionCommitted = false; ActionElapsed = 0.f;
     AttackCooldown = 1.f / FMath::Max(0.01f, FinalStats.AttackSpeed);
@@ -875,8 +884,7 @@ void ABattleUnitBase::TickAction(float Delta)
         if (!IsValid(BoardManager) || !BoardManager->IsMoveReservationValid(this, Id, ReservedTile)
             || !IsEnemyTarget(CurrentTarget)) { CancelAction(); return; }
         const FVector Goal = ReservedTile->GetSurfaceLocation() + FVector(0, 0, 1.f);
-        FVector Facing = Goal - GetActorLocation(); Facing.Z = 0.f;
-        if (!Facing.IsNearlyZero()) SetActorRotation(Facing.Rotation());
+        FaceLocation(*this, Goal);
         SetActorLocation(FMath::VInterpConstantTo(GetActorLocation(), Goal, Delta, FinalStats.MovementSpeed));
         if (GetActorLocation().Equals(Goal, 0.1f))
         {
@@ -943,6 +951,8 @@ bool ABattleUnitBase::TryCastSkill()
     }
     if (Chosen == INDEX_NONE) return false;
     const FUnitSkillDefinition& Skill = Definition.Skills[Chosen];
+    // 자기 자신과 아군 대상 스킬은 현재 방향을 유지한다.
+    if (IsEnemyTarget(Target)) FaceLocation(*this, Target->GetActorLocation());
     ActiveActionId = ++ActionSequence; ActiveSkillIndex = Chosen; ActionTarget = Target;
     ActionElapsed = 0.f; ActionDuration = FMath::Max(0.01f, Positive(Skill.CastSeconds)); bActionCommitted = false;
     PreCastMana = CurrentMana; CurrentMana = 0.f;
@@ -1064,6 +1074,18 @@ void ABattleUnitBase::DispatchTrigger(EUnitTrigger Trigger, const FUnitDamageReq
     }
 }
 
+FUnitProjectileView ABattleUnitBase::MakeProjectileView(const FPendingProjectile& Projectile) const
+{
+    // 생성 순간과 비행 중에 같은 정보를 전달한다. 현재 행동으로 탄 종류를 추측하지 않는다.
+    FUnitProjectileView View;
+    View.ProjectileId = Projectile.Id;
+    View.Position = Projectile.Position;
+    View.Target = Projectile.Target.Get();
+    View.bBasicAttack = Projectile.bBasic;
+    View.SkillId = Projectile.bBasic ? NAME_None : Projectile.Skill.SkillId;
+    return View;
+}
+
 void ABattleUnitBase::LaunchProjectile(FPendingProjectile Projectile)
 {
     if (!Projectile.Target.IsValid() || Positive(Projectile.Speed) <= 0.f || Positive(Projectile.Lifetime) <= 0.f)
@@ -1074,8 +1096,7 @@ void ABattleUnitBase::LaunchProjectile(FPendingProjectile Projectile)
     Projectile.Position = GetActorLocation() + FVector(0, 0, GetHealthBarHeight() * 0.5f);
     Projectile.Speed = Positive(Projectile.Speed); Projectile.Lifetime = Positive(Projectile.Lifetime);
     Projectiles.Add(Projectile);
-    FUnitProjectileView View; View.ProjectileId = Projectile.Id; View.Position = Projectile.Position; View.Target = Projectile.Target.Get();
-    ProjectileUpdated(View);
+    ProjectileUpdated(MakeProjectileView(Projectile));
 }
 void ABattleUnitBase::TickProjectiles(float Delta)
 {
@@ -1104,8 +1125,7 @@ void ABattleUnitBase::TickProjectiles(float Delta)
         }
         else
         {
-            FUnitProjectileView View; View.ProjectileId = Shot.Id; View.Position = Shot.Position; View.Target = Target;
-            Projectiles.Add(Shot); ProjectileUpdated(View);
+            Projectiles.Add(Shot); ProjectileUpdated(MakeProjectileView(Shot));
         }
     }
 }
@@ -1351,6 +1371,100 @@ bool FUnitEffectsRulesTest::RunTest(const FString& Parameters)
     FUnitDamageRequest Kill; Kill.Attacker = Hunter; Kill.RawDamage = 10000.f;
     First->ReceiveDamage(Kill); Hunter->Tick(0.4f);
     TestTrue(TEXT("Dead target causes retarget"), Hunter->CurrentTarget == Second);
+    return true;
+}
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FUnitActionFacingTest, "ProjectA.Unit.ActionFacing",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FUnitActionFacingTest::RunTest(const FString& Parameters)
+{
+    using namespace UnitCombatTests;
+    for (EUnitAttackDelivery Delivery : {EUnitAttackDelivery::Melee, EUnitAttackDelivery::Projectile})
+    {
+        FFixture F; FUnitDefinition Data = FFixture::UnitData(); Data.Skills.Empty();
+        Data.BasicAttack.Delivery = Delivery;
+        Data.Visuals.VisualTransform.SetRotation(FRotator(0.f, -90.f, 0.f).Quaternion());
+        ABattleUnitBase* A = F.Spawn(TEXT("Attacker"), Data, EBattleTeam::Player, 0);
+        ABattleUnitBase* B = F.Spawn(TEXT("First"), Data, EBattleTeam::Enemy, 1);
+        ABattleUnitBase* C = F.Spawn(TEXT("Second"), Data, EBattleTeam::Enemy, 2);
+        if (!A || !B || !C) return false;
+        B->SetActorLocation(FVector(0, 500, 200)); C->SetActorLocation(FVector(-500, -500, 100));
+        A->StartCombat(); B->StartCombat(); C->StartCombat();
+        A->SetActorRotation(FRotator(0, 180, 0)); A->CurrentTarget = B;
+        TestTrue(TEXT("Attack starts without prior movement"), A->TryBasicAttack());
+        TestTrue(TEXT("Attack faces target horizontally"), A->GetActorForwardVector().Equals((B->GetActorLocation() - A->GetActorLocation()).GetSafeNormal2D(), 0.001f));
+        TestTrue(TEXT("DT model forward correction stays applied"), A->VisualRoot->GetRelativeRotation().Equals(FRotator(0, -90, 0)));
+        TestTrue(TEXT("Model +Y forward matches target after correction"), A->VisualRoot->GetRightVector().Equals(A->GetActorForwardVector(), 0.001f));
+        A->FinishAction(A->ActiveActionId); A->CurrentTarget = nullptr; A->Tick(2.f);
+        A->CurrentTarget = C;
+        TestTrue(TEXT("Next attack can start after retarget"), A->TryBasicAttack());
+        TestTrue(TEXT("Next attack turns toward new target"), A->GetActorForwardVector().Equals((C->GetActorLocation() - A->GetActorLocation()).GetSafeNormal2D(), 0.001f));
+        const FRotator Facing = A->GetActorRotation(); A->CurrentTarget = B;
+        TestFalse(TEXT("Active attack rejects another start"), A->TryBasicAttack());
+        TestTrue(TEXT("Rejected start does not turn active attack"), A->GetActorRotation().Equals(Facing));
+    }
+    for (EUnitSkillTarget Target : {EUnitSkillTarget::CurrentEnemy, EUnitSkillTarget::ClosestEnemy, EUnitSkillTarget::Self, EUnitSkillTarget::LowestHealthAlly})
+    {
+        FFixture F; FUnitDefinition Data = FFixture::UnitData(); Data.Skills[0].Target = Target;
+        ABattleUnitBase* A = F.Spawn(TEXT("Caster"), Data, EBattleTeam::Player, 0);
+        ABattleUnitBase* B = F.Spawn(TEXT("Enemy"), Data, EBattleTeam::Enemy, 1);
+        ABattleUnitBase* Ally = F.Spawn(TEXT("Ally"), Data, EBattleTeam::Player, 2);
+        if (!A || !B || !Ally) return false;
+        B->SetActorLocation(FVector(200, 500, 300));
+        A->SetCombatRoster({A, B, Ally}); A->StartCombat(); B->StartCombat(); Ally->StartCombat();
+        FUnitDamageRequest Damage; Damage.Attacker = B; Damage.RawDamage = 100.f;
+        Ally->ReceiveDamage(Damage);
+        A->CurrentTarget = B; A->GainMana(100.f); A->SetActorRotation(FRotator(0, -35, 0));
+        TestTrue(TEXT("Skill starts"), A->TryCastSkill());
+        if (Target == EUnitSkillTarget::CurrentEnemy || Target == EUnitSkillTarget::ClosestEnemy)
+            TestTrue(TEXT("Enemy skill faces chosen target without pitching"), A->GetActorForwardVector().Equals((B->GetActorLocation() - A->GetActorLocation()).GetSafeNormal2D(), 0.001f));
+        else TestTrue(TEXT("Self and ally skills preserve facing"), A->GetActorRotation().Equals(FRotator(0, -35, 0)));
+    }
+    return true;
+}
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FUnitProjectileViewTest, "ProjectA.Unit.ProjectileViewIdentity",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FUnitProjectileViewTest::RunTest(const FString& Parameters)
+{
+    using namespace UnitCombatTests;
+    FFixture F; FUnitDefinition Data = FFixture::UnitData();
+    Data.BasicAttack.Delivery = EUnitAttackDelivery::Projectile;
+    FUnitSkillDefinition& Skill = Data.Skills[0];
+    Skill.SkillId = TEXT("Fireball"); Skill.Target = EUnitSkillTarget::CurrentEnemy;
+    Skill.bProjectile = true; Skill.bUseAnimNotify = true;
+    Skill.Effects[0].Kind = EUnitEffectKind::Damage;
+    ABattleUnitBase* A = F.Spawn(TEXT("Mage"), Data, EBattleTeam::Player, 0);
+    ABattleUnitBase* B = F.Spawn(TEXT("Enemy"), FFixture::UnitData(), EBattleTeam::Enemy, 1);
+    if (!A || !B) return false;
+    A->StartCombat(); B->StartCombat(); A->CurrentTarget = B;
+    TestTrue(TEXT("Basic attack starts"), A->TryBasicAttack());
+    TestTrue(TEXT("Basic projectile launches"), A->CommitAttackHit(A->ActiveActionId));
+    A->FinishAction(A->ActiveActionId);
+    A->GainMana(100.f);
+    TestTrue(TEXT("Fireball cast starts while basic projectile is airborne"), A->TryCastSkill());
+    TestTrue(TEXT("Skill projectile launches"), A->CommitSkillEffect(A->ActiveActionId));
+    A->FinishAction(A->ActiveActionId);
+    if (!TestEqual(TEXT("Basic and skill shots coexist"), A->Projectiles.Num(), 2)) return false;
+    const FUnitProjectileView Basic = A->MakeProjectileView(A->Projectiles[0]);
+    const FUnitProjectileView Fireball = A->MakeProjectileView(A->Projectiles[1]);
+    TestTrue(TEXT("Basic shot flag and empty skill ID"), Basic.bBasicAttack && Basic.SkillId.IsNone());
+    TestTrue(TEXT("Skill shot flag and actual DT skill ID"), !Fireball.bBasicAttack && Fireball.SkillId == TEXT("Fireball"));
+    TestTrue(TEXT("Shot IDs stay distinct"), Basic.ProjectileId != Fireball.ProjectileId);
+    TestTrue(TEXT("Launch target and position preserved"), Basic.Target == B && Fireball.Target == B
+        && Basic.Position.Equals(A->Projectiles[0].Position) && Fireball.Position.Equals(A->Projectiles[1].Position));
+    // 다음 행동/데이터가 바뀌어도 이미 발사된 탄의 외형 구분은 바뀌면 안 된다.
+    A->CurrentTarget = nullptr; A->Definition.Skills[0].SkillId = TEXT("NextSkill");
+    A->Tick(0.1f);
+    if (!TestEqual(TEXT("Both shots remain in flight"), A->Projectiles.Num(), 2)) return false;
+    const FUnitProjectileView MovedBasic = A->MakeProjectileView(A->Projectiles[0]);
+    const FUnitProjectileView MovedSkill = A->MakeProjectileView(A->Projectiles[1]);
+    TestTrue(TEXT("Basic identity stable in flight"), MovedBasic.ProjectileId == Basic.ProjectileId && MovedBasic.bBasicAttack && MovedBasic.SkillId.IsNone());
+    TestTrue(TEXT("Skill identity stable in flight"), MovedSkill.ProjectileId == Fireball.ProjectileId && !MovedSkill.bBasicAttack && MovedSkill.SkillId == Fireball.SkillId);
+    TestTrue(TEXT("Original target retained"), MovedBasic.Target == B && MovedSkill.Target == B);
+    TestFalse(TEXT("Basic position updated"), MovedBasic.Position.Equals(Basic.Position));
+    TestFalse(TEXT("Skill position updated"), MovedSkill.Position.Equals(Fireball.Position));
+    TestEqual(TEXT("No premature damage during flight"), B->CurrentHP, 1000.f);
+    A->StopCombat();
+    TestTrue(TEXT("Combat stop clears both shots"), A->Projectiles.IsEmpty());
     return true;
 }
 #endif

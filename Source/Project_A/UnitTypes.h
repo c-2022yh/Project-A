@@ -266,6 +266,10 @@ struct PROJECT_A_API FUnitProjectileView
     UPROPERTY(BlueprintReadOnly) int32 ProjectileId = 0;
     UPROPERTY(BlueprintReadOnly) FVector Position = FVector::ZeroVector;
     UPROPERTY(BlueprintReadOnly) TObjectPtr<class ABattleUnitBase> Target = nullptr;
+    // 발사 시점에 확정된 종류다. 시전자 상태가 이후 바뀌어도 같은 탄의 종류는 유지한다.
+    UPROPERTY(BlueprintReadOnly) bool bBasicAttack = false;
+    // 평타는 None, 스킬 탄은 DT의 SkillId다. 여러 스킬의 외형을 공통 BP에서 구분한다.
+    UPROPERTY(BlueprintReadOnly) FName SkillId;
 };
 
 USTRUCT(BlueprintType)
