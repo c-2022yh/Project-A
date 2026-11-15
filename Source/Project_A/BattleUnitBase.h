@@ -150,10 +150,12 @@ private:
         int32 Id = 0;
         int32 TargetGeneration = 0;
         FVector Position = FVector::ZeroVector;
+        FRotator Rotation = FRotator::ZeroRotator;
         TWeakObjectPtr<ABattleUnitBase> Target;
         float Speed = 0.f;
         float Lifetime = 0.f;
         bool bBasic = false;
+        FUnitProjectileVisualDefinition Visual;
         FUnitDamageRequest Damage;
         FUnitSkillDefinition Skill;
         TArray<float> EffectValues;

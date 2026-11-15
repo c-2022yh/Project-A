@@ -851,6 +851,7 @@ bool ABattleUnitBase::CommitAttackHit(int32 ActionId)
     {
         FPendingProjectile Shot; Shot.bBasic = true; Shot.Target = Target; Shot.Damage = Damage;
         Shot.Speed = Definition.BasicAttack.ProjectileSpeed; Shot.Lifetime = Definition.BasicAttack.ProjectileMaxLifetime;
+        Shot.Visual = Definition.BasicAttack.ProjectileVisual;
         LaunchProjectile(MoveTemp(Shot));
     }
     else
@@ -998,6 +999,7 @@ void ABattleUnitBase::ExecuteSkill(const FUnitSkillDefinition& Skill, ABattleUni
     {
         FPendingProjectile Shot; Shot.Target = Target; Shot.Skill = Skill; Shot.EffectValues = Values; Shot.Damage = Context;
         Shot.Speed = Skill.ProjectileSpeed; Shot.Lifetime = Skill.ProjectileMaxLifetime;
+        Shot.Visual = Skill.ProjectileVisual;
         LaunchProjectile(MoveTemp(Shot));
     }
     else ApplySkillEffects(Skill, Target, Values, Context);
@@ -1080,9 +1082,11 @@ FUnitProjectileView ABattleUnitBase::MakeProjectileView(const FPendingProjectile
     FUnitProjectileView View;
     View.ProjectileId = Projectile.Id;
     View.Position = Projectile.Position;
+    View.Rotation = Projectile.Rotation;
     View.Target = Projectile.Target.Get();
     View.bBasicAttack = Projectile.bBasic;
     View.SkillId = Projectile.bBasic ? NAME_None : Projectile.Skill.SkillId;
+    View.Visual = Projectile.Visual;
     return View;
 }
 
@@ -1094,6 +1098,9 @@ void ABattleUnitBase::LaunchProjectile(FPendingProjectile Projectile)
     }
     Projectile.Id = ++ActionSequence; Projectile.TargetGeneration = Projectile.Target->CombatGeneration;
     Projectile.Position = GetActorLocation() + FVector(0, 0, GetHealthBarHeight() * 0.5f);
+    const FVector Goal = Projectile.Target->GetActorLocation() + FVector(0, 0, Projectile.Target->GetHealthBarHeight() * 0.5f);
+    const FVector Direction = Goal - Projectile.Position;
+    if (!Direction.IsNearlyZero()) Projectile.Rotation = Direction.Rotation();
     Projectile.Speed = Positive(Projectile.Speed); Projectile.Lifetime = Positive(Projectile.Lifetime);
     Projectiles.Add(Projectile);
     ProjectileUpdated(MakeProjectileView(Projectile));
@@ -1111,7 +1118,11 @@ void ABattleUnitBase::TickProjectiles(float Delta)
         if (!IsValid(Target) || !Target->IsAlive() || !Target->bInCombat || Shot.TargetGeneration != Target->CombatGeneration || Shot.Lifetime <= 0.f)
         { ProjectileRemoved(Shot.Id, false); continue; }
         const FVector Goal = Target->GetActorLocation() + FVector(0, 0, Target->GetHealthBarHeight() * 0.5f);
+        const FVector PreviousPosition = Shot.Position;
         Shot.Position = FMath::VInterpConstantTo(Shot.Position, Goal, Delta, Shot.Speed);
+        // 타깃이 움직여 경로가 바뀌면 실제 이번 프레임 이동 방향으로 탄을 돌린다.
+        const FVector Travel = Shot.Position - PreviousPosition;
+        if (!Travel.IsNearlyZero()) Shot.Rotation = Travel.Rotation();
         if (Shot.Position.Equals(Goal, 0.1f))
         {
             ProjectileRemoved(Shot.Id, true);
@@ -1136,6 +1147,8 @@ void ABattleUnitBase::TickProjectiles(float Delta)
 // 게임 Shipping 빌드에는 포함되지 않는다. 화면/실제 BP 연결은 별도 에디터 확인 대상이다.
 #include "Misc/AutomationTest.h"
 #include "Engine/Engine.h"
+#include "Engine/StaticMesh.h"
+#include "Materials/Material.h"
 namespace UnitCombatTests
 {
     struct FFixture
@@ -1428,9 +1441,22 @@ bool FUnitProjectileViewTest::RunTest(const FString& Parameters)
     using namespace UnitCombatTests;
     FFixture F; FUnitDefinition Data = FFixture::UnitData();
     Data.BasicAttack.Delivery = EUnitAttackDelivery::Projectile;
+    UStaticMesh* BasicMesh = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Sphere.Sphere"));
+    UStaticMesh* SkillMesh = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cube.Cube"));
+    if (!TestNotNull(TEXT("Basic visual mesh"), BasicMesh) || !TestNotNull(TEXT("Skill visual mesh"), SkillMesh)) return false;
+    UMaterialInterface* BasicMaterial = UMaterial::GetDefaultMaterial(MD_Surface);
+    UMaterialInstanceDynamic* SkillMaterial = UMaterialInstanceDynamic::Create(BasicMaterial, F.World);
+    Data.BasicAttack.ProjectileVisual.Mesh = BasicMesh;
+    Data.BasicAttack.ProjectileVisual.Material = BasicMaterial;
+    Data.BasicAttack.ProjectileVisual.Scale = FVector(0.15f);
+    Data.BasicAttack.ProjectileVisual.Rotation = FRotator(0.f, -90.f, 0.f);
     FUnitSkillDefinition& Skill = Data.Skills[0];
     Skill.SkillId = TEXT("Fireball"); Skill.Target = EUnitSkillTarget::CurrentEnemy;
     Skill.bProjectile = true; Skill.bUseAnimNotify = true;
+    Skill.ProjectileVisual.Mesh = SkillMesh;
+    Skill.ProjectileVisual.Material = SkillMaterial;
+    Skill.ProjectileVisual.Scale = FVector(0.3f, 0.4f, 0.5f);
+    Skill.ProjectileVisual.Rotation = FRotator(10.f, 20.f, 30.f);
     Skill.Effects[0].Kind = EUnitEffectKind::Damage;
     ABattleUnitBase* A = F.Spawn(TEXT("Mage"), Data, EBattleTeam::Player, 0);
     ABattleUnitBase* B = F.Spawn(TEXT("Enemy"), FFixture::UnitData(), EBattleTeam::Enemy, 1);
@@ -1448,11 +1474,18 @@ bool FUnitProjectileViewTest::RunTest(const FString& Parameters)
     const FUnitProjectileView Fireball = A->MakeProjectileView(A->Projectiles[1]);
     TestTrue(TEXT("Basic shot flag and empty skill ID"), Basic.bBasicAttack && Basic.SkillId.IsNone());
     TestTrue(TEXT("Skill shot flag and actual DT skill ID"), !Fireball.bBasicAttack && Fireball.SkillId == TEXT("Fireball"));
+    TestTrue(TEXT("Basic shot uses basic attack visual data"), Basic.Visual.Mesh == BasicMesh && Basic.Visual.Material == BasicMaterial && Basic.Visual.Scale.Equals(FVector(0.15f)));
+    TestTrue(TEXT("Skill shot uses its own visual data"), Fireball.Visual.Mesh == SkillMesh && Fireball.Visual.Material == SkillMaterial && Fireball.Visual.Scale.Equals(FVector(0.3f, 0.4f, 0.5f)));
+    TestTrue(TEXT("Launch rotation faces target center"), Basic.Rotation.Vector().Equals((B->GetActorLocation() + FVector(0,0,B->GetHealthBarHeight()*0.5f) - Basic.Position).GetSafeNormal(), 0.001f));
+    TestTrue(TEXT("Mesh correction is separate from flight rotation"), Basic.Visual.Rotation.Equals(FRotator(0,-90,0)) && Fireball.Visual.Rotation.Equals(FRotator(10,20,30)));
     TestTrue(TEXT("Shot IDs stay distinct"), Basic.ProjectileId != Fireball.ProjectileId);
     TestTrue(TEXT("Launch target and position preserved"), Basic.Target == B && Fireball.Target == B
         && Basic.Position.Equals(A->Projectiles[0].Position) && Fireball.Position.Equals(A->Projectiles[1].Position));
     // 다음 행동/데이터가 바뀌어도 이미 발사된 탄의 외형 구분은 바뀌면 안 된다.
     A->CurrentTarget = nullptr; A->Definition.Skills[0].SkillId = TEXT("NextSkill");
+    A->Definition.BasicAttack.ProjectileVisual = FUnitProjectileVisualDefinition();
+    A->Definition.Skills[0].ProjectileVisual = FUnitProjectileVisualDefinition();
+    B->SetActorLocation(FVector(500.f, 500.f, 200.f));
     A->Tick(0.1f);
     if (!TestEqual(TEXT("Both shots remain in flight"), A->Projectiles.Num(), 2)) return false;
     const FUnitProjectileView MovedBasic = A->MakeProjectileView(A->Projectiles[0]);
@@ -1460,11 +1493,23 @@ bool FUnitProjectileViewTest::RunTest(const FString& Parameters)
     TestTrue(TEXT("Basic identity stable in flight"), MovedBasic.ProjectileId == Basic.ProjectileId && MovedBasic.bBasicAttack && MovedBasic.SkillId.IsNone());
     TestTrue(TEXT("Skill identity stable in flight"), MovedSkill.ProjectileId == Fireball.ProjectileId && !MovedSkill.bBasicAttack && MovedSkill.SkillId == Fireball.SkillId);
     TestTrue(TEXT("Original target retained"), MovedBasic.Target == B && MovedSkill.Target == B);
+    TestTrue(TEXT("Launched basic visual is an independent snapshot"), MovedBasic.Visual.Mesh == BasicMesh && MovedBasic.Visual.Material == BasicMaterial && MovedBasic.Visual.Scale.Equals(Basic.Visual.Scale));
+    TestTrue(TEXT("Launched skill visual is an independent snapshot"), MovedSkill.Visual.Mesh == SkillMesh && MovedSkill.Visual.Material == SkillMaterial && MovedSkill.Visual.Scale.Equals(Fireball.Visual.Scale));
+    TestTrue(TEXT("Basic mesh correction remains fixed in flight"), MovedBasic.Visual.Rotation.Equals(Basic.Visual.Rotation));
+    TestTrue(TEXT("Skill mesh correction remains fixed in flight"), MovedSkill.Visual.Rotation.Equals(Fireball.Visual.Rotation));
+    TestTrue(TEXT("Basic rotation follows actual travel toward moving target"), MovedBasic.Rotation.Vector().Equals((MovedBasic.Position - Basic.Position).GetSafeNormal(), 0.001f));
+    TestTrue(TEXT("Skill rotation follows actual travel toward moving target"), MovedSkill.Rotation.Vector().Equals((MovedSkill.Position - Fireball.Position).GetSafeNormal(), 0.001f));
+    TestFalse(TEXT("Flight rotation changes with trajectory"), MovedBasic.Rotation.Equals(Basic.Rotation));
     TestFalse(TEXT("Basic position updated"), MovedBasic.Position.Equals(Basic.Position));
     TestFalse(TEXT("Skill position updated"), MovedSkill.Position.Equals(Fireball.Position));
     TestEqual(TEXT("No premature damage during flight"), B->CurrentHP, 1000.f);
     A->StopCombat();
     TestTrue(TEXT("Combat stop clears both shots"), A->Projectiles.IsEmpty());
+    B->StopCombat(); A->ResetForRound(); B->ResetForRound();
+    A->StartCombat(); B->StartCombat(); B->SetActorLocation(A->GetActorLocation()); A->CurrentTarget = B;
+    A->TryBasicAttack(); A->CommitAttackHit(A->ActiveActionId);
+    if (!TestEqual(TEXT("Zero-distance shot can launch"), A->Projectiles.Num(), 1)) return false;
+    TestTrue(TEXT("Zero-distance launch rotation remains finite"), !A->MakeProjectileView(A->Projectiles[0]).Rotation.ContainsNaN());
     return true;
 }
 #endif

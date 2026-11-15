@@ -83,6 +83,20 @@ struct PROJECT_A_API FUnitAnimationDefinition
     UPROPERTY(EditAnywhere, BlueprintReadOnly) TObjectPtr<UAnimMontage> SpawnMontage = nullptr;
 };
 
+// 평타와 스킬이 같은 외형 규격을 사용한다. 메시가 비어 있으면 화면에는 표시하지 않는다.
+USTRUCT(BlueprintType)
+struct PROJECT_A_API FUnitProjectileVisualDefinition
+{
+    GENERATED_BODY()
+    UPROPERTY(EditAnywhere, BlueprintReadOnly) TObjectPtr<UStaticMesh> Mesh = nullptr;
+    // 비우면 메시 원본 머티리얼을 사용한다. 지정하면 0번 슬롯에 적용한다.
+    UPROPERTY(EditAnywhere, BlueprintReadOnly) TObjectPtr<UMaterialInterface> Material = nullptr;
+    // 공통 BP의 Actor/루트 스케일은 1로 두고, 표시 메시의 크기는 이 값만 적용한다.
+    UPROPERTY(EditAnywhere, BlueprintReadOnly) FVector Scale = FVector::OneVector;
+    // 원본 메시의 긴 축/화살촉을 논리적 정면(+X)에 맞추는 상대 회전 보정이다.
+    UPROPERTY(EditAnywhere, BlueprintReadOnly) FRotator Rotation = FRotator::ZeroRotator;
+};
+
 USTRUCT(BlueprintType)
 struct PROJECT_A_API FUnitBasicAttackDefinition
 {
@@ -99,6 +113,7 @@ struct PROJECT_A_API FUnitBasicAttackDefinition
     UPROPERTY(EditAnywhere, BlueprintReadOnly, meta=(ClampMin="0", ClampMax="1")) float HitTimeRatio = 0.5f;
     UPROPERTY(EditAnywhere, BlueprintReadOnly) float ProjectileSpeed = 1000.f;
     UPROPERTY(EditAnywhere, BlueprintReadOnly) float ProjectileMaxLifetime = 10.f;
+    UPROPERTY(EditAnywhere, BlueprintReadOnly) FUnitProjectileVisualDefinition ProjectileVisual;
 };
 
 UENUM(BlueprintType)
@@ -185,6 +200,7 @@ struct PROJECT_A_API FUnitSkillDefinition
     UPROPERTY(EditAnywhere, BlueprintReadOnly) bool bProjectile = false;
     UPROPERTY(EditAnywhere, BlueprintReadOnly) float ProjectileSpeed = 1000.f;
     UPROPERTY(EditAnywhere, BlueprintReadOnly) float ProjectileMaxLifetime = 10.f;
+    UPROPERTY(EditAnywhere, BlueprintReadOnly) FUnitProjectileVisualDefinition ProjectileVisual;
     // 일반 스킬은 기절로 취소되지 않는다. 채널링 예외만 명시적으로 켠다.
     UPROPERTY(EditAnywhere, BlueprintReadOnly) bool bInterruptibleByStun = false;
     UPROPERTY(EditAnywhere, BlueprintReadOnly) bool bRefundManaWhenInterrupted = false;
@@ -265,11 +281,15 @@ struct PROJECT_A_API FUnitProjectileView
     GENERATED_BODY()
     UPROPERTY(BlueprintReadOnly) int32 ProjectileId = 0;
     UPROPERTY(BlueprintReadOnly) FVector Position = FVector::ZeroVector;
+    // 실제 비행 방향을 +X 정면으로 하는 Actor 회전. Visual.Rotation과 별도로 적용한다.
+    UPROPERTY(BlueprintReadOnly) FRotator Rotation = FRotator::ZeroRotator;
     UPROPERTY(BlueprintReadOnly) TObjectPtr<class ABattleUnitBase> Target = nullptr;
     // 발사 시점에 확정된 종류다. 시전자 상태가 이후 바뀌어도 같은 탄의 종류는 유지한다.
     UPROPERTY(BlueprintReadOnly) bool bBasicAttack = false;
     // 평타는 None, 스킬 탄은 DT의 SkillId다. 여러 스킬의 외형을 공통 BP에서 구분한다.
     UPROPERTY(BlueprintReadOnly) FName SkillId;
+    // 발사 시 복사한 DT 외형. BP는 기물/스킬 이름 분기 없이 이 설정을 적용한다.
+    UPROPERTY(BlueprintReadOnly) FUnitProjectileVisualDefinition Visual;
 };
 
 USTRUCT(BlueprintType)
