@@ -5,6 +5,7 @@
 #include "AutoBattleGameMode.generated.h"
 
 class ABoardManager;
+class AShopUnitBridge;
 UENUM(BlueprintType)
 enum class EGamePhase : uint8
 {
@@ -79,6 +80,8 @@ public:
     TObjectPtr<ABoardManager> BoardManager;
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Game")
     TArray<ABattleUnitBase*> BattleUnits;
+    // Optional integration owner. Existing BP flow is used when no bridge is installed.
+    UPROPERTY(Transient, BlueprintReadOnly, Category="Game|Shop") TObjectPtr<AShopUnitBridge> ShopBridge;
     UPROPERTY(BlueprintAssignable, Category="Game")
     FGamePhaseChangedEvent OnPhaseChanged;
 

@@ -1,4 +1,5 @@
 #include "AutoBattleGameMode.h"
+#include "Shop/ShopUnitBridge.h"
 #include "AutoBattlePlayerController.h"
 #include "AutoBattleHUD.h"
 #include "BoardManager.h"
@@ -66,7 +67,8 @@ void AAutoBattleGameMode::InitializeEncounter()
     }
 
     StatusMessage = TEXT("Board ready. Spawn units and start preparation in the GameMode graph.");
-    ReceiveBoardReady();
+    if (IsValid(ShopBridge)) ShopBridge->InitializeSingleBattle();
+    else ReceiveBoardReady();
 }
 
 bool AAutoBattleGameMode::BeginEncounterSetup()
@@ -179,7 +181,7 @@ bool AAutoBattleGameMode::CompleteEncounterSetup()
             return false;
         }
     }
-    if (Players == 0 || Enemies == 0 || DeployedPlayers > MaxBoardUnits)
+    if ((Players == 0 && !IsValid(ShopBridge)) || Enemies == 0 || DeployedPlayers > MaxBoardUnits)
     {
         StatusMessage = TEXT("Setup: register both teams and respect the player deployment limit.");
         return false;
@@ -216,11 +218,13 @@ void AAutoBattleGameMode::RequestCombatStart()
     if (!bEncounterReady) return;
     if (CurrentPhase == EGamePhase::Preparation && !bPreparationActive) return;
     if (CurrentPhase != EGamePhase::Preparation && CurrentPhase != EGamePhase::RoundClear) return;
-    ReceiveCombatStartRequested();
+    if (IsValid(ShopBridge)) ShopBridge->StartLinkedCombat();
+    else ReceiveCombatStartRequested();
 }
 void AAutoBattleGameMode::RequestBattleRestart()
 {
-    ReceiveRestartRequested();
+    if (IsValid(ShopBridge)) RestartBattle();
+    else ReceiveRestartRequested();
 }
 void AAutoBattleGameMode::ReportBattleResult(EGamePhase Result)
 {
@@ -229,7 +233,8 @@ void AAutoBattleGameMode::ReportBattleResult(EGamePhase Result)
     PendingBattleResult = Result;
     // BP에 결과를 알리기 전에 공격을 멈춘다. 결과 화면이 늦게 표시되어도 전투가 계속되지 않게 한다.
     for (ABattleUnitBase* Unit : BattleUnits) if (IsValid(Unit)) Unit->StopCombat();
-    ReceiveBattleResultDetected(Result);
+    if (IsValid(ShopBridge)) ShopBridge->FinishLinkedCombat(static_cast<uint8>(Result));
+    else ReceiveBattleResultDetected(Result);
 }
 void AAutoBattleGameMode::StartCombatPhase()
 {

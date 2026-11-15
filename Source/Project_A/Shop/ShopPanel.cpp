@@ -2,6 +2,8 @@
 #include "RosterManager.h"
 #include "ShopManager.h"
 #include "ShopTransactionManager.h"
+#include "ShopUnitBridge.h"
+#include "../AutoBattleGameMode.h"
 #include "Engine/Canvas.h"
 #include "Engine/LocalPlayer.h"
 #include "SceneView.h"
@@ -167,6 +169,13 @@ void UShopPanel::DrawShop(AHUD& HUD, const AShopManager& Manager)
     HUD.DrawText(FString::Printf(TEXT("R%d   |   %d GOLD   |   LIMIT %d"), Manager.GetRound(), Manager.GetGold(), Manager.GetDeploymentLimit()),
         GoldColor, X + 12, Y + 12);
     if (!Feedback.IsEmpty()) HUD.DrawText(Feedback, Muted, X + 12, Y - 22);
+
+    // 연결 액터가 있는 맵에만 전투 시작 버튼을 표시한다. 독립 큐브 테스트 UI는 유지한다.
+    const auto* Mode = Cast<AAutoBattleGameMode>(GetWorld()->GetAuthGameMode());
+    if (Mode && IsValid(Mode->ShopBridge) && IsValid(Mode->ShopBridge->Transactions)
+        && Mode->ShopBridge->Transactions->Shop == &Manager)
+        AddButton(HUD, TEXT("Start combat"), { EAction::StartCombat, {X + Width - 158, Y - 36}, {158, 29} },
+            Mode->ShopBridge->CanStartLinkedCombat());
 
     const bool bTrade = Manager.GetPhase() == EShopPhase::Preparation || Manager.GetPhase() == EShopPhase::Combat;
     AddButton(HUD, TEXT("Reroll  2G"), { EAction::Reroll, { X + Width - 206, Y + 7 }, { 94, 27 } }, bTrade);
@@ -343,6 +352,13 @@ void UShopPanel::RunAction(const FButton& Button, AShopTransactionManager& Manag
         case EAction::Sell: Result = Manager.RequestSell(Button.Unit); break;
         case EAction::Reward: Result = Manager.RequestReward(Button.Index, Button.Revision); break;
         case EAction::InventoryPage: ItemPage += Button.Index; break;
+        case EAction::StartCombat:
+        {
+            auto* Mode = Cast<AAutoBattleGameMode>(GetWorld()->GetAuthGameMode());
+            if (!Mode || !IsValid(Mode->ShopBridge) || !Mode->ShopBridge->StartLinkedCombat())
+                Result = ETransactionResult::Unavailable;
+            break;
+        }
     }
     Feedback = Button.Action == EAction::Reward && Result == ETransactionResult::Success
         ? TEXT("Reward received.") : ResultText(Result);

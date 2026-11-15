@@ -48,7 +48,7 @@ void ABoardManager::BeginPlay()
         Mode->OnPhaseChanged.AddDynamic(this, &ABoardManager::HandleGamePhaseChanged);
 }
 
-// [진행 연결 경계] 준비 진입 시 대기석 동기화, 결과 진입 시 배치 복귀를 수행한다. 판매/합성/새 보상 등록 뒤에는 성장 파트가 별도 동기화를 요청한다.
+// [진행 ?�결 경계] 준�?진입 ???�기석 ?�기?? 결과 진입 ??배치 복�?�??�행?�다. ?�매/?�성/??보상 ?�록 ?�에???�장 ?�트가 별도 ?�기?��? ?�청?�다.
 void ABoardManager::HandleGamePhaseChanged(EGamePhase Phase)
 {
     if (Phase == EGamePhase::Combat) bFormationRestoreCompleted = false;
@@ -104,7 +104,7 @@ bool ABoardManager::HasUnitsPreventingBoardGeneration() const
     return false;
 }
 
-// [맵 BP 계약] 후보 타일을 만드는 동안 외부 등록/배치/경제 처리를 수행하지 않는다. 기존 타일 참조 캐시는 생성 성공 알림 후 다시 조회한다.
+// [�?BP 계약] ?�보 ?�?�을 만드???�안 ?��? ?�록/배치/경제 처리�??�행?��? ?�는?? 기존 ?�??참조 캐시???�성 ?�공 ?�림 ???�시 조회?�다.
 bool ABoardManager::GenerateBoardInternal()
 {
     UWorld* World = GetWorld();
@@ -296,7 +296,7 @@ ABenchTile* ABoardManager::GetBenchSlot(int32 SlotIndex) const
     return nullptr;
 }
 
-// [성장 연결 경계] 읽기 전용 배정 계획. 기존 미배정 유닛까지 먼저 수용하고 새 지급분을 판단한다. 임시 배열의 배정은 예약이 아니다.
+// [?�장 ?�결 경계] ?�기 ?�용 배정 계획. 기존 미배???�닛까�? 먼�? ?�용?�고 ??지급분???�단?�다. ?�시 배열??배정?� ?�약???�니??
 bool ABoardManager::BuildBenchSynchronizationPlan(TArray<ABattleUnitBase*>& OutWaitingUnits,
     TArray<ABenchTile*>& OutAssignedSlots, FString& OutFailureReason) const
 {
@@ -452,7 +452,7 @@ void ABoardManager::SynchronizeBenchOccupancy()
     }
 }
 
-// [소유권 경계] 이 함수의 복구 범위는 대기석 점유와 이동 위치이다. 유닛 등록·골드·아이템 변경은 호출자가 수행/취소한다.
+// [?�유�?경계] ???�수??복구 범위???�기석 ?�유?� ?�동 ?�치?�다. ?�닛 ?�록·골드·?�이??변경�? ?�출?��? ?�행/취소?�다.
 bool ABoardManager::TrySynchronizeBenchOccupancy(FString& OutFailureReason)
 {
     TArray<ABattleUnitBase*> WaitingUnits;
@@ -586,7 +586,7 @@ bool ABoardManager::RejectFormation(const FString& Reason)
     return false;
 }
 
-// [진행/성장 경계] 저장본은 현재 액터와 타일 참조이다. 저장 후 유닛 교체/합성/파괴가 필요하면 복귀 순서와 참조 갱신 계약을 먼저 합의한다.
+// [진행/?�장 경계] ?�?�본?� ?�재 ?�터?� ?�??참조?�다. ?�?????�닛 교체/?�성/?�괴가 ?�요?�면 복�? ?�서?� 참조 갱신 계약??먼�? ?�의?�다.
 bool ABoardManager::SavePlayerFormation()
 {
     if (bPlacementInProgress || bBoardGenerationInProgress)
@@ -623,7 +623,7 @@ bool ABoardManager::SavePlayerFormation()
     return true;
 }
 
-// [진행 연결 경계] 재호출 가능한 복귀 API. 실패 시 LastFormationFailureReason을 확인하고, 부분 복구 불가 메시지를 정상 성공으로 취급하지 않는다.
+// [진행 ?�결 경계] ?�호�?가?�한 복�? API. ?�패 ??LastFormationFailureReason???�인?�고, 부�?복구 불�? 메시지�??�상 ?�공?�로 취급?��? ?�는??
 bool ABoardManager::RestorePlayerFormation()
 {
     if (bPlacementInProgress || bBoardGenerationInProgress)
@@ -937,7 +937,7 @@ bool ABoardManager::RejectPlacement(const FString& Reason)
     return false;
 }
 
-// [전투 연계] 보드의 실제 액터 배치는 BattleUnitBase.PlaceOnTile에 위임한다. 배치 높이 규칙을 변경하면 표면 위치 보정 계약도 함께 조정한다.
+// [?�투 ?�계] 보드???�제 ?�터 배치??BattleUnitBase.PlaceOnTile???�임?�다. 배치 ?�이 규칙??변경하�??�면 ?�치 보정 계약???�께 조정?�다.
 bool ABoardManager::ApplyUnitPlacement(ABattleUnitBase* Unit, ABoardTile* Tile, ABenchTile* BenchSlot)
 {
     if (!IsValid(Unit) || !Unit->IsAlive() || Unit->bInCombat) return false;
@@ -960,8 +960,8 @@ bool ABoardManager::ApplyUnitPlacement(ABattleUnitBase* Unit, ABoardTile* Tile, 
         && IsValid(Unit) && Unit->GetActorLocation().Equals(Expected, 0.1f);
 }
 
-// [협업 주의] 중첩 BoardManager 이동 요청은 막지만, 외부의 직접 액터 이동/점유 변경까지 차단하지는 않는다.
-// 두 이동의 콜백이 모두 끝난 뒤 점유 연결과 실제 위치를 함께 확인하고, 불일치하면 기존 복구 경로를 사용한다.
+// [?�업 주의] 중첩 BoardManager ?�동 ?�청?� 막�?�? ?��???직접 ?�터 ?�동/?�유 변경까지 차단?��????�는??
+// ???�동??콜백??모두 ?�난 ???�유 ?�결�??�제 ?�치�??�께 ?�인?�고, 불일치하�?기존 복구 경로�??�용?�다.
 bool ABoardManager::MoveOrSwapUnits(const FUnitPlacementSnapshot& Source, ABoardTile* TargetTile,
     ABenchTile* TargetSlot, ABattleUnitBase* OtherUnit, FString& OutFailureReason)
 {
