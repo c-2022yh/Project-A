@@ -144,7 +144,6 @@ public:
     UFUNCTION(BlueprintImplementableEvent, Category="Unit|Visual") void ProjectileUpdated(const FUnitProjectileView& Projectile);
     UFUNCTION(BlueprintImplementableEvent, Category="Unit|Visual") void ProjectileRemoved(int32 ProjectileId, bool bHit);
 private:
-    friend class AShopUnitBridge;
     struct FSkillRuntime { int32 Count = 0; float Cooldown = 0.f; };
     struct FPendingProjectile
     {

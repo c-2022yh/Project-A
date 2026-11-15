@@ -15,10 +15,10 @@ class USceneComponent;
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FBoardGeneratedEvent);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FUnitMovedToBenchEvent, ABattleUnitBase*, Unit);
 
-// 보드·대기석 생성, 점유 검증, 배치/교환, 전투 전 배치 저장과 복귀
-// 외부 파트는 공개 API를 사용하고 Tiles/BenchSlots, 타일 점유값, 유닛 CurrentTile/bIsDeployed를 직접 수정하지 않는다.
-// 성장 연계: 수령 전 CanAcceptWaitingUnits -> 소유 시스템 등록 -> TrySynchronizeBenchOccupancy 결과 확인.
-// 수용량 조회는 예약이 아니므로 실제 실패 시 구매·보상 지급의 취소/재시도는 호출자가 처리한다.
+// 보드·?�기석 ?�성, ?�유 검�? 배치/교환, ?�투 ??배치 ?�?�과 복�?
+// ?��? ?�트??공개 API�??�용?�고 Tiles/BenchSlots, ?�???�유�? ?�닛 CurrentTile/bIsDeployed�?직접 ?�정?��? ?�는??
+// ?�장 ?�계: ?�령 ??CanAcceptWaitingUnits -> ?�유 ?�스???�록 -> TrySynchronizeBenchOccupancy 결과 ?�인.
+// ?�용??조회???�약???�니므�??�제 ?�패 ??구매·보상 지급의 취소/?�시?�는 ?�출?��? 처리?�다.
 UCLASS()
 class PROJECT_A_API ABoardManager : public AActor
 {
@@ -35,36 +35,36 @@ public:
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Board")
     USceneComponent* SceneRoot;
 
-    // [맵/BP 설정] 생성할 보드 타일 BP. 자동 간격 사용 시 BP의 TileMesh에 메시가 지정되어 있어야 한다.
+    // [�?BP ?�정] ?�성??보드 ?�??BP. ?�동 간격 ?�용 ??BP??TileMesh??메시가 지?�되???�어???�다.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Board")
     TSubclassOf<ABoardTile> TileClass;
 
-    // [맵/BP 설정] 생성할 대기석 BP. 표시 메시와 Visibility 충돌을 설정하며, 보드 생성 전에 지정한다.
+    // [�?BP ?�정] ?�성???�기석 BP. ?�시 메시?� Visibility 충돌???�정?�며, 보드 ?�성 ?�에 지?�한??
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Board|Bench")
     TSubclassOf<ABenchTile> BenchTileClass;
 
-    // [확정 규칙] 대기석 7칸. 현재 생성된 실물 슬롯 수는 BenchSlots와 수용량 API로 확인한다.
+    // [?�정 규칙] ?�기석 7�? ?�재 ?�성???�물 ?�롯 ?�는 BenchSlots?� ?�용??API�??�인?�다.
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Board|Bench")
     int32 BenchSlotCount = 7;
 
-    // [맵 연결] GameMode.WaitingAreaOffset에 더하는 대기석 배치 보정값. 생성 이후 값을 바꿔도 기존 슬롯이 자동 재배치되지는 않는다.
+    // [�??�결] GameMode.WaitingAreaOffset???�하???�기석 배치 보정�? ?�성 ?�후 값을 바꿔??기존 ?�롯???�동 ?�배치되지???�는??
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Board|Bench",
         meta = (DisplayName = "Bench Start Offset", ToolTip = "Offset from the default first bench slot position."))
     FVector BenchAreaOffset = FVector::ZeroVector;
 
-    // [맵 설정] 기본 6행 x 5열, 총 30칸. 출전 한도와 별개이며, 런타임 점유 중 규격 변경/재생성은 지원하지 않는다.
+    // [�??�정] 기본 6??x 5?? �?30�? 출전 ?�도?� 별개?�며, ?��????�유 �?규격 변�??�생?��? 지?�하지 ?�는??
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Board")
     int32 Rows = 6;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Board")
     int32 Columns = 5;
 
-    // [맵/진영 연결] 음의 월드 Y 쪽부터 아군 행을 지정한다. 기본 3행이며, 나머지는 적 배치 영역이다.
+    // [�?진영 ?�결] ?�의 ?�드 Y 쪽�????�군 ?�을 지?�한?? 기본 3?�이�? ?�머지????배치 ?�역?�다.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Board|Teams",
         meta = (ClampMin = "0", ToolTip = "Number of player rows from the negative world Y side."))
     int32 PlayerRows = 3;
 
-    // [아트 연결] 생성 시 아군 타일 메시의 머티리얼 슬롯 0에 적용한다. 호버/선택 표시 머티리얼과 별도 계약이 필요하다.
+    // [?�트 ?�결] ?�성 ???�군 ?�??메시??머티리얼 ?�롯 0???�용?�다. ?�버/?�택 ?�시 머티리얼�?별도 계약???�요?�다.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Board|Teams",
         meta = (ToolTip = "Player tile material for mesh slot 0."))
     TObjectPtr<UMaterialInterface> PlayerTileMaterial = nullptr;
@@ -73,7 +73,7 @@ public:
         meta = (ToolTip = "Enemy tile material for mesh slot 0."))
     TObjectPtr<UMaterialInterface> EnemyTileMaterial = nullptr;
 
-    // [맵/아트 연결] 첫 보드 타일 메시의 월드 바운드로 간격을 계산한다. 메시 크기/회전 변경 시 생성 결과를 확인한다.
+    // [�??�트 ?�결] �?보드 ?�??메시???�드 바운?�로 간격??계산?�다. 메시 ?�기/?�전 변�????�성 결과�??�인?�다.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Board|Spacing")
     bool bAutoCalculateSpacing = true;
 
@@ -89,144 +89,144 @@ public:
         meta = (ClampMin = "0.01", EditCondition = "!bAutoCalculateSpacing"))
     float VerticalSpacing = 150.0f;
 
-    // [전투/맵 조회] 마지막 생성 성공 시 확정한 월드 간격. 입력 설정값과 구분하며, 육각 거리·경로 탐색 API를 대신하지 않는다.
+    // [?�투/�?조회] 마�?�??�성 ?�공 ???�정???�드 간격. ?�력 ?�정값과 구분?�며, ?�각 거리·경로 ?�색 API�??�?�하지 ?�는??
     UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Board|Spacing")
     float EffectiveHorizontalSpacing = 0.0f;
 
     UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Board|Spacing")
     float EffectiveVerticalSpacing = 0.0f;
 
-    // [전투/성장 조회] 보드 타일 목록. 조회 전용으로 사용하고 좌표 조회는 GetTile을 권장한다. 재생성 시 기존 타일 참조는 무효화된다.
+    // [?�투/?�장 조회] 보드 ?�??목록. 조회 ?�용?�로 ?�용?�고 좌표 조회??GetTile??권장?�다. ?�생????기존 ?�??참조??무효?�된??
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Board")
     TArray<ABoardTile*> Tiles;
 
-    // [성장/UI 조회] 대기석 목록. 배열 인덱스와 SlotIndex를 혼동하지 말고 GetBenchSlot을 사용한다. 직접 Add/Remove/점유 수정 금지.
+    // [?�장/UI 조회] ?�기석 목록. 배열 ?�덱?��? SlotIndex�??�동?��? 말고 GetBenchSlot???�용?�다. 직접 Add/Remove/?�유 ?�정 금�?.
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Board|Bench")
     TArray<ABenchTile*> BenchSlots;
 
-    // [맵/초기화 연결] BeginPlay에서도 호출된다. 등록된 유닛·점유자가 있으면 거부하며, 모든 새 타일 생성 성공 후 교체한다.
-    // 타일 BP 생성/파괴 콜백에서 유닛 지급·등록·배치를 시작하지 않는다. 후속 연결은 OnBoardGenerated/진행 담당의 준비 완료 흐름을 따른다.
+    // [�?초기???�결] BeginPlay?�서???�출?�다. ?�록???�닛·?�유?��? ?�으�?거�??�며, 모든 ???�???�성 ?�공 ??교체?�다.
+    // ?�??BP ?�성/?�괴 콜백?�서 ?�닛 지급·등록·배치�? ?�작?��? ?�는?? ?�속 ?�결?� OnBoardGenerated/진행 ?�당??준�??�료 ?�름???�른??
     UFUNCTION(BlueprintCallable, Category = "Board")
     void GenerateBoard();
 
-    // [진행 연결] 전체 월드 조작 허용 스위치. false는 현재 선택/드래그도 해제한다. true로 바꿔도 사유별 잠금은 해제되지 않는다.
+    // [진행 ?�결] ?�체 ?�드 조작 ?�용 ?�위�? false???�재 ?�택/?�래그도 ?�제?�다. true�?바꿔???�유�??�금?� ?�제?��? ?�는??
     UFUNCTION(BlueprintCallable, Category = "Board|Interaction")
     void SetPlacementEnabled(bool bEnabled);
 
     // Each owner must use its own stable reason and release only that reason. Repeated calls are idempotent.
-    // [UI/정산 연결] 예: PopupInventory 또는 Settlement 사유로 열 때 true, 닫을 때 같은 사유로 false를 호출한다.
-    // 여러 소유자/중첩 창은 서로 다른 사유를 사용해야 한다. 동일 사유는 참조 횟수를 세지 않는 중복 허용 스위치이다.
-    // 재시작/화면 제거 시 해제 책임도 해당 소유자에게 있다. GameMode 직접 시작이나 경제 시스템을 자동 잠그지는 않는다.
+    // [UI/?�산 ?�결] ?? PopupInventory ?�는 Settlement ?�유�?????true, ?�을 ??같�? ?�유�?false�??�출?�다.
+    // ?�러 ?�유??중첩 창�? ?�로 ?�른 ?�유�??�용?�야 ?�다. ?�일 ?�유??참조 ?�수�??��? ?�는 중복 ?�용 ?�위치이??
+    // ?�시???�면 ?�거 ???�제 책임???�당 ?�유?�에�??�다. GameMode 직접 ?�작?�나 경제 ?�스?�을 ?�동 ?�그지???�는??
     UFUNCTION(BlueprintCallable, Category = "Board|Interaction")
     void SetInteractionLocked(FName LockReason, bool bLocked);
 
-    // [UI/진행 조회] 전체 스위치·사유별 잠금·보드 갱신 여부만 검사한다. 현재 게임 단계에서의 입력 허용은 CanProcessWorldInput을 사용한다.
+    // [UI/진행 조회] ?�체 ?�위치·사?�별 ?�금·보드 갱신 ?��?�?검?�한?? ?�재 게임 ?�계?�서???�력 ?�용?� CanProcessWorldInput???�용?�다.
     UFUNCTION(BlueprintPure, Category = "Board|Interaction")
     bool IsPlacementEnabled() const;
 
-    // [진행 조회] 준비 활성 상태 또는 RoundClear에서 배치 가능한지 확인한다. RoundClear 내 보상 선택/짧은 정산 구분은 외부 잠금으로 연결한다.
+    // [진행 조회] 준�??�성 ?�태 ?�는 RoundClear?�서 배치 가?�한지 ?�인?�다. RoundClear ??보상 ?�택/짧�? ?�산 구분?� ?��? ?�금?�로 ?�결?�다.
     UFUNCTION(BlueprintPure, Category = "Board|Interaction")
     bool IsPlacementPhaseActive() const;
 
-    // [입력/UI 조회] 단계·준비 완료·잠금의 공통 정책. 준비/보상 단계와 정산 대기가 아닌 전투 중 대기석 조작을 위한 입구이다.
+    // [?�력/UI 조회] ?�계·준�??�료·?�금??공통 ?�책. 준�?보상 ?�계?� ?�산 ?�기�? ?�닌 ?�투 �??�기석 조작???�한 ?�구?�다.
     UFUNCTION(BlueprintPure, Category = "Board|Interaction")
     bool CanProcessWorldInput() const;
 
-    // [입력/성장 조회] 기물별 조작 가능 여부. 전투 중 출전 기물은 제외하고 대기 기물만 허용한다. 슬롯 수용 여부까지 보장하지 않는다.
+    // [?�력/?�장 조회] 기물�?조작 가???��?. ?�투 �?출전 기물?� ?�외?�고 ?��?기물�??�용?�다. ?�롯 ?�용 ?��?까�? 보장?��? ?�는??
     UFUNCTION(BlueprintPure, Category = "Board|Interaction")
     bool CanInteractWithUnit(ABattleUnitBase* Unit) const;
 
-    // [맵/진행 연결] 생성 성공 후 한 번 전달하며, 이 시점부터 새 타일 목록을 조회할 수 있다.
-    // 이 이벤트 자체는 유닛 등록/Encounter 준비 완료를 뜻하지 않는다. GameMode의 기존 설정 흐름과 중복 생성하지 않는다.
+    // [�?진행 ?�결] ?�성 ?�공 ????�??�달?�며, ???�점부?????�??목록??조회?????�다.
+    // ???�벤???�체???�닛 ?�록/Encounter 준�??�료�??�하지 ?�는?? GameMode??기존 ?�정 ?�름�?중복 ?�성?��? ?�는??
     UPROPERTY(BlueprintAssignable, Category = "Board")
     FBoardGeneratedEvent OnBoardGenerated;
 
-    // [전투/배치 조회] 0부터 시작하는 (Row, Column)으로 조회한다. 좌표가 없으면 nullptr이며, 배열 위치로 좌표를 추정하지 않는다.
+    // [?�투/배치 조회] 0부???�작?�는 (Row, Column)?�로 조회?�다. 좌표가 ?�으�?nullptr?�며, 배열 ?�치�?좌표�?추정?��? ?�는??
     UFUNCTION(BlueprintPure, Category = "Board")
     ABoardTile* GetTile(int32 Row, int32 Column) const;
 
-    // [보상/자동 배치 조회] 아군 영역 후보 목록만 반환한다. 빈칸·출전 한도 검사는 TryPlaceUnitOnTile에서 별도로 수행한다.
+    // [보상/?�동 배치 조회] ?�군 ?�역 ?�보 목록�?반환?�다. 빈칸·출전 ?�도 검?�는 TryPlaceUnitOnTile?�서 별도�??�행?�다.
     UFUNCTION(BlueprintPure, Category = "Board")
     TArray<ABoardTile*> GetPlayerTiles() const;
 
     UFUNCTION(BlueprintPure, Category = "Board")
     TArray<ABoardTile*> GetEnemyTiles() const;
 
-    // [성장/UI 조회] 0부터 시작하는 SlotIndex로 조회한다. 존재하지 않으면 nullptr이며, 빈칸 여부는 별도이다.
+    // [?�장/UI 조회] 0부???�작?�는 SlotIndex�?조회?�다. 존재?��? ?�으�?nullptr?�며, 빈칸 ?��???별도?�다.
     UFUNCTION(BlueprintPure, Category = "Board|Bench")
     ABenchTile* GetBenchSlot(int32 SlotIndex) const;
 
     // Compatibility entry point; reports failures through LastBenchFailureReason and the log.
-    // [기존 BP 호환] 반환값 없는 동기화. 실패는 LastBenchFailureReason/StatusMessage/로그로 확인한다. 신규 지급 흐름은 Try 버전을 권장한다.
+    // [기존 BP ?�환] 반환�??�는 ?�기?? ?�패??LastBenchFailureReason/StatusMessage/로그�??�인?�다. ?�규 지�??�름?� Try 버전??권장?�다.
     UFUNCTION(BlueprintCallable, Category = "Board|Bench")
     void SynchronizeBenchOccupancy();
 
     // Assign all registered waiting units, or leave the bench unchanged on validation/capacity failure.
-    // [성장/보상 연결] 등록된 대기 유닛 전체를 검사·배정한다. 기존 정상 점유와 드래그 중인 기존 기물 위치는 유지한다.
-    // 용량/상태 검사 실패는 변경 전 반환하고, 이동 중 실패는 원상 복구를 시도한다. 복구 불가 상황도 실패 사유로 반환한다.
-    // 등록·골드·아이템·보상 완료 상태는 변경하지 않는다. false를 무시하고 지급 완료 처리하지 않는다.
+    // [?�장/보상 ?�결] ?�록???��??�닛 ?�체�?검??�배?�한?? 기존 ?�상 ?�유?� ?�래�?중인 기존 기물 ?�치???��??�다.
+    // ?�량/?�태 검???�패??변�???반환?�고, ?�동 �??�패???�상 복구�??�도?�다. 복구 불�? ?�황???�패 ?�유�?반환?�다.
+    // ?�록·골드·?�이?�·보???�료 ?�태??변경하지 ?�는?? false�?무시?�고 지�??�료 처리?��? ?�는??
     UFUNCTION(BlueprintCallable, Category = "Board|Bench")
     bool TrySynchronizeBenchOccupancy(FString& OutFailureReason);
 
     // Read-only queries, not reservations. Includes registered units still awaiting a bench assignment.
-    // [구매/보상 사전 조회] AdditionalUnitCount는 앞으로 추가할 대기 기물 수이며, 이미 등록된 미배정 기물도 공간 계산에 포함된다.
-    // 0은 현재 대기 유닛 전체의 배정 가능 검사이다. 자동 보드 배치/합성으로 실제 추가 수가 달라지면 성장 파트가 그 수를 결정한다.
+    // [구매/보상 ?�전 조회] AdditionalUnitCount???�으�?추�????��?기물 ?�이�? ?��? ?�록??미배??기물??공간 계산???�함?�다.
+    // 0?� ?�재 ?��??�닛 ?�체??배정 가??검?�이?? ?�동 보드 배치/?�성?�로 ?�제 추�? ?��? ?�라지�??�장 ?�트가 �??��? 결정?�다.
     UFUNCTION(BlueprintPure, Category = "Board|Bench")
     bool CanAcceptWaitingUnits(int32 AdditionalUnitCount, FString& OutFailureReason) const;
 
     // Returns an actually empty slot not already needed by a registered waiting unit; may return null.
-    // [성장 조회] 실제 비어 있고 기존 미배정 기물에게 필요하지 않은 슬롯만 반환한다. 공간 예약이나 점유 변경은 하지 않는다.
-    // 정리 가능한 오래된 점유가 있으면 수용량 조회는 성공해도 이 함수는 nullptr일 수 있으므로, 등록 후 Try 동기화 결과를 기준으로 한다.
+    // [?�장 조회] ?�제 비어 ?�고 기존 미배??기물?�게 ?�요?��? ?��? ?�롯�?반환?�다. 공간 ?�약?�나 ?�유 변경�? ?��? ?�는??
+    // ?�리 가?�한 ?�래???�유가 ?�으�??�용??조회???�공?�도 ???�수??nullptr?????�으므�? ?�록 ??Try ?�기??결과�?기�??�로 ?�다.
     UFUNCTION(BlueprintPure, Category = "Board|Bench")
     ABenchTile* GetFreeBenchSlot() const;
 
-    // [UI/진단 조회] 마지막 Try 동기화 실패 이유. 성공 시 비운다. 순수 수용량 조회의 이유는 해당 OutFailureReason으로 받는다.
+    // [UI/진단 조회] 마�?�?Try ?�기???�패 ?�유. ?�공 ??비운?? ?�수 ?�용??조회???�유???�당 OutFailureReason?�로 받는??
     UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Board|Bench")
     FString LastBenchFailureReason;
 
-    // [진행 연결] 준비/RoundClear에서 현재 살아 있는 출전 아군의 타일 참조를 저장한다. 검증 실패 시 이전 저장본을 유지한다.
-    // 전투를 실제로 시작하는 소유 파트가 성공 여부를 확인해야 한다. 저장 파일/UnitId 기반 영구 보관 기능은 아니다.
+    // [진행 ?�결] 준�?RoundClear?�서 ?�재 ?�아 ?�는 출전 ?�군???�??참조�??�?�한?? 검�??�패 ???�전 ?�?�본???��??�다.
+    // ?�투�??�제�??�작?�는 ?�유 ?�트가 ?�공 ?��?�??�인?�야 ?�다. ?�???�일/UnitId 기반 ?�구 보�? 기능?� ?�니??
     UFUNCTION(BlueprintCallable, Category = "Board|Placement")
     bool SavePlayerFormation();
 
-    // [진행/정산 연결] 결과 대기 또는 결과 단계에서 생존 기물을 저장 타일로 복귀시킨다. 사망 기물 부활·체력 회복은 수행하지 않는다.
-    // 결과 단계 알림에서 자동 호출된다. false면 저장본을 남기고 LastFormationFailureReason을 확인하도록 한다.
-    // 저장 유닛을 합성/판매/파괴하거나 새 Encounter로 교체하기 전에 복귀 순서를 진행/성장 파트와 맞춰야 한다.
+    // [진행/?�산 ?�결] 결과 ?��??�는 결과 ?�계?�서 ?�존 기물???�???�?�로 복�??�킨?? ?�망 기물 부?�·체???�복?� ?�행?��? ?�는??
+    // 결과 ?�계 ?�림?�서 ?�동 ?�출?�다. false�??�?�본???�기�?LastFormationFailureReason???�인?�도�??�다.
+    // ?�???�닛???�성/?�매/?�괴?�거????Encounter�?교체?�기 ?�에 복�? ?�서�?진행/?�장 ?�트?� 맞춰???�다.
     UFUNCTION(BlueprintCallable, Category = "Board|Placement")
     bool RestorePlayerFormation();
 
     // Existence only; restoration validates referenced units/tiles before changing state.
-    // [진행 조회] 미소비 저장본 존재 여부만 반환한다. 참조 유효성·유닛 수·복귀 성공까지 보장하는 값은 아니다.
+    // [진행 조회] 미소�??�?�본 존재 ?��?�?반환?�다. 참조 ?�효?�·유???�·복귀 ?�공까�? 보장?�는 값�? ?�니??
     UFUNCTION(BlueprintPure, Category = "Board|Placement")
     bool HasSavedPlayerFormation() const;
 
-    // [진행/UI 진단] 마지막 저장/복귀 실패 이유. 성공 시 비우며, 자동 복귀 실패도 이 값과 로그에 남긴다.
+    // [진행/UI 진단] 마�?�??�??복�? ?�패 ?�유. ?�공 ??비우�? ?�동 복�? ?�패????값과 로그???�긴??
     UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Board|Placement")
     FString LastFormationFailureReason;
 
-    // [입력/배치 연결] 등록된 아군의 보드 이동/교환 진입점. 빈칸으로 추가 출전할 때만 GameMode.MaxBoardUnits를 검사한다.
-    // 인원이 유지되는 교환은 한도에서도 허용한다. 배치 성공과 경제/아이템 처리 성공은 별개이며 false면 실패 이유를 확인한다.
-    // BattleUnitBase.PlaceOnTile 직접 호출은 이 함수의 단계·한도·대기석 점유 검사를 우회한다.
+    // [?�력/배치 ?�결] ?�록???�군??보드 ?�동/교환 진입?? 빈칸?�로 추�? 출전???�만 GameMode.MaxBoardUnits�?검?�한??
+    // ?�원???��??�는 교환?� ?�도?�서???�용?�다. 배치 ?�공�?경제/?�이??처리 ?�공?� 별개?�며 false�??�패 ?�유�??�인?�다.
+    // BattleUnitBase.PlaceOnTile 직접 ?�출?� ???�수???�계·?�도·?�기석 ?�유 검?��? ?�회?�다.
     UFUNCTION(BlueprintCallable, Category = "Board|Placement")
     bool TryPlaceUnitOnTile(ABattleUnitBase* Unit, ABoardTile* TargetTile);
 
-    // [입력/회수 연결] 지정 슬롯으로 회수/대기석 이동/교환한다. 만석이어도 유효한 상대와의 교환은 가능하다.
-    // 전투 중에는 대기석 기물끼리의 조작만 허용한다. 보드에서 내려간 경우에만 OnUnitMovedToBench를 알린다.
+    // [?�력/?�수 ?�결] 지???�롯?�로 ?�수/?�기석 ?�동/교환?�다. 만석?�어???�효???��??�??교환?� 가?�하??
+    // ?�투 중에???�기석 기물?�리??조작�??�용?�다. 보드?�서 ?�려�?경우?�만 OnUnitMovedToBench�??�린??
     UFUNCTION(BlueprintCallable, Category = "Board|Placement")
     bool TryMoveUnitToBench(ABattleUnitBase* Unit, ABenchTile* TargetSlot);
 
     // Checks one inactive player unit at a stable placement boundary; does not repair state.
-    // [협업 진단] 등록된 비전투 아군 1기의 보드/대기석 중복 점유와 양방향 연결을 검사한다. 상태를 자동 수리하거나 슬롯을 확보하지 않는다.
+    // [?�업 진단] ?�록??비전???�군 1기의 보드/?�기석 중복 ?�유?� ?�방???�결??검?�한?? ?�태�??�동 ?�리?�거???�롯???�보?��? ?�는??
     UFUNCTION(BlueprintPure, Category = "Board|Placement")
     bool ValidateUnitPlacementState(ABattleUnitBase* Unit, FString& OutFailureReason) const;
 
-    // [UI/진단 조회] 마지막 이동/교환 API 실패 이유. 정상 성공 시 비운다. 문자열 자체를 규칙 판정 키로 사용하지 않는다.
+    // [UI/진단 조회] 마�?�??�동/교환 API ?�패 ?�유. ?�상 ?�공 ??비운?? 문자???�체�?규칙 ?�정 ?�로 ?�용?��? ?�는??
     UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Board|Placement")
     FString LastPlacementFailureReason;
 
-    // [성장/아이템 연결] 보드에서 대기석으로 내려간 기물만 통지한다. 교환으로 내려간 상대도 포함하며, 대기석 내 이동에는 발생하지 않는다.
-    // Roster/아이템 담당은 여기서 장착 해제·아이템창 반환을 연결한다. 반환 성공 여부를 받거나 경제 처리를 되돌리는 계약은 현재 없다.
-    // 수신 시 점유는 이미 확정되어 있다. 아이템 처리와 별도로 선택을 변경한다면 Controller 공개 API를 사용한다.
+    // [?�장/?�이???�결] 보드?�서 ?�기석?�로 ?�려�?기물�??��??�다. 교환?�로 ?�려�??��????�함?�며, ?�기석 ???�동?�는 발생?��? ?�는??
+    // Roster/?�이???�당?� ?�기???�착 ?�제·?�이?�창 반환???�결?�다. 반환 ?�공 ?��?�?받거??경제 처리�??�돌리는 계약?� ?�재 ?�다.
+    // ?�신 ???�유???��? ?�정?�어 ?�다. ?�이??처리?� 별도�??�택??변경한?�면 Controller 공개 API�??�용?�다.
     UPROPERTY(BlueprintAssignable, Category = "Board|Bench")
     FUnitMovedToBenchEvent OnUnitMovedToBench;
 
@@ -253,7 +253,6 @@ public:
     UFUNCTION(BlueprintCallable, Category="Board|Movement") void PruneInvalidReservations();
 
 private:
-    friend class AShopUnitBridge;
 
     friend class ABoardTile;
     struct FMoveReservation

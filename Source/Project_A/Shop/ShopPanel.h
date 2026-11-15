@@ -25,7 +25,7 @@ public:
     bool IsOverButton(FVector2D ViewportPosition) const;
 
 private:
-    enum class EAction : uint8 { Buy, Reroll, Lock, Equip, Unequip, Sell, Reward, InventoryPage, StartCombat };
+    enum class EAction : uint8 { Buy, Reroll, Lock, Equip, Unequip, Sell, Reward, InventoryPage };
 
     struct FButton
     {

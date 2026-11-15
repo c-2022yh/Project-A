@@ -1,8 +1,6 @@
 #include "AutoBattlePlayerController.h"
 
 #include "AutoBattleGameMode.h"
-#include "Shop/ShopUnitBridge.h"
-#include "Shop/ShopTransactionManager.h"
 #include "BattleUnitBase.h"
 #include "BenchTile.h"
 #include "BoardManager.h"
@@ -191,15 +189,7 @@ bool AAutoBattlePlayerController::PlaceSelectedUnitOnTile(ABoardTile* Tile)
     if (DragSessionRevision != ExpectedRevision || IsUnitDragActive()
         || !IsValid(Unit) || SelectedUnit != Unit || !IsValid(Tile)) return false;
     ABoardManager* Board = GetBoardManager();
-    if (!IsValid(Board) || !Board->CanInteractWithUnit(Unit)) return false;
-    const AAutoBattleGameMode* Mode = Cast<AAutoBattleGameMode>(UGameplayStatics::GetGameMode(this));
-    if (Mode && IsValid(Mode->ShopBridge))
-    {
-        AShopUnitBridge* Bridge = Mode->ShopBridge;
-        if (!IsValid(Bridge->Transactions) || Bridge->Transactions->RequestMove(Bridge->GetUnitId(Unit),
-            FUnitPosition{EUnitLocation::Board, Tile->Row, Tile->Column}) != ETransactionResult::Success) return false;
-    }
-    else if (!Board->TryPlaceUnitOnTile(Unit, Tile)) return false;
+    if (!IsValid(Board) || !Board->TryPlaceUnitOnTile(Unit, Tile)) return false;
     // A successful placement event may select a different unit or begin a new drag.
     if (SelectedUnit == Unit && !bUnitDragPending) ClearSelection();
     return true;
@@ -214,15 +204,7 @@ bool AAutoBattlePlayerController::MoveSelectedUnitToBench(ABenchTile* Slot)
     if (DragSessionRevision != ExpectedRevision || IsUnitDragActive()
         || !IsValid(Unit) || SelectedUnit != Unit || !IsValid(Slot)) return false;
     ABoardManager* Board = GetBoardManager();
-    if (!IsValid(Board) || !Board->CanInteractWithUnit(Unit)) return false;
-    const AAutoBattleGameMode* Mode = Cast<AAutoBattleGameMode>(UGameplayStatics::GetGameMode(this));
-    if (Mode && IsValid(Mode->ShopBridge))
-    {
-        AShopUnitBridge* Bridge = Mode->ShopBridge;
-        if (!IsValid(Bridge->Transactions) || Bridge->Transactions->RequestMoveToBench(Bridge->GetUnitId(Unit),
-            Slot->SlotIndex) != ETransactionResult::Success) return false;
-    }
-    else if (!Board->TryMoveUnitToBench(Unit, Slot)) return false;
+    if (!IsValid(Board) || !Board->TryMoveUnitToBench(Unit, Slot)) return false;
     if (SelectedUnit == Unit && !bUnitDragPending) ClearSelection();
     return true;
 }

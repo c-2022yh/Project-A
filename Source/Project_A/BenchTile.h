@@ -43,7 +43,6 @@ public:
 	FVector GetSurfaceLocation() const;
 
 private:
-    friend class AShopUnitBridge;
 	friend class ABoardManager;
 
 	// [내부 계약] BoardManager 전용 점유 갱신. 유닛 등록/좌표/출전 상태/아이템을 자동 변경하는 함수가 아니다.
