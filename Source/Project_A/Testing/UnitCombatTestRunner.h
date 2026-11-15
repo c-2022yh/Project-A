@@ -46,6 +46,10 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Combat Test|Setup") TSoftObjectPtr<UDataTable> UnitDataTable;
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Combat Test|Setup") FUnitCombatTestSide Ally;
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Combat Test|Setup") FUnitCombatTestSide Enemy;
+    // 기존 Ally/Enemy는 첫 유닛으로 유지한다. 추가 항목마다 서로 다른 시작 좌표를 지정한다.
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Combat Test|Setup") TArray<FUnitCombatTestSide> AdditionalAllies;
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Combat Test|Setup") TArray<FUnitCombatTestSide> AdditionalEnemies;
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Combat Test|Setup") bool bPlaySpawnAnimations = true;
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Combat Test|Setup") bool bAutoStartOnPlay = true;
     // true: 런타임 DT 사본에서만 평타 Notify를 끄고 타이머 판정을 사용한다.
     // 실제 몽타주/Notify 검증 단계에서는 false로 바꿔 원본 설정 그대로 시험한다.
@@ -83,4 +87,5 @@ private:
     void SetStatus(EUnitCombatTestState State, const FString& Message);
     UFUNCTION() void HandleUnitDied(ABattleUnitBase* Unit);
     void ProcessResult();
+    bool HasLivingTeam(EBattleTeam Team) const;
 };

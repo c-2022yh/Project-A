@@ -270,6 +270,14 @@ void ABattleUnitBase::ApplyVisuals()
 }
 
 
+float ABattleUnitBase::PlaySpawnAnimation()
+{
+    if (!IsAlive() || bInCombat || ActionState != EUnitActionState::Idle || !Definition.Animations.SpawnMontage) return 0.f;
+    if (UAnimInstance* Anim = Body->GetAnimInstance())
+        return Anim->Montage_Play(Definition.Animations.SpawnMontage);
+    return 0.f;
+}
+
 bool ABattleUnitBase::IsAlive() const { return bInitialized && !bIsDead && CurrentHP > 0.f; }
 bool ABattleUnitBase::UsesMana() const
 {
@@ -436,7 +444,14 @@ void ABattleUnitBase::CancelAction(bool bRefundMana)
     if (ActionState == EUnitActionState::Moving) ReleaseMove(false);
     const bool bRefund = bRefundMana && ActionState == EUnitActionState::Casting && !bActionCommitted;
     ActiveActionId = 0; ActiveSkillIndex = INDEX_NONE; ActionTarget.Reset(); bActionCommitted = false;
-    if (UAnimInstance* Anim = Body->GetAnimInstance()) Anim->Montage_Stop(0.1f);
+    if (UAnimInstance* Anim = Body->GetAnimInstance())
+    {
+        // 사망 다음 프레임의 StopCombat도 이 함수를 호출한다.
+        // 이미 재생 중인 사망 연출은 유지하고, 사망 전 공격/시전 취소는 기존대로 처리한다.
+        const bool bPlayingDeath = bIsDead && Definition.Animations.DeathMontage
+            && Anim->Montage_IsPlaying(Definition.Animations.DeathMontage);
+        if (!bPlayingDeath) Anim->Montage_Stop(0.1f);
+    }
     ChangeAction(bIsDead ? EUnitActionState::Dead : EUnitActionState::Idle);
     if (bRefund) { CurrentMana = FMath::Min(PreCastMana, FinalStats.MaxMana); OnManaChanged.Broadcast(this); }
 }

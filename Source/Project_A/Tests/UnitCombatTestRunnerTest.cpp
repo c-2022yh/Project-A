@@ -9,6 +9,11 @@
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "Kismet/GameplayStatics.h"
+#include "Animation/AnimInstance.h"
+#include "Animation/AnimMontage.h"
+#include "Animation/AnimSequence.h"
+#include "Components/SkeletalMeshComponent.h"
+#include "Engine/SkeletalMesh.h"
 
 namespace UnitRunnerTests
 {
@@ -161,6 +166,94 @@ bool FUnitRunnerNotifyTest::RunTest(const FString& Parameters)
     TestEqual(TEXT("No synthetic hits in Notify mode"), Runner->AllyUnit->CurrentHP, Runner->AllyUnit->FinalStats.MaxHealth);
     TestEqual(TEXT("Enemy receives no timer fallback damage"), Runner->EnemyUnit->CurrentHP, Runner->EnemyUnit->FinalStats.MaxHealth);
     TestFalse(TEXT("Timeout stops combat"), Runner->AllyUnit->bInCombat || Runner->EnemyUnit->bInCombat);
+    return true;
+}
+// 실제 에셋의 뼈/모션은 읽기만 하고 몽타주와 DT는 메모리에서 만든다.
+// 렌더링 검증 대신 소환 대기와 전투 종료 시 사망 몽타주 보존을 검사한다.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FUnitRunnerAnimationTest, "ProjectA.TestRunner.SpawnAndDeathMontages",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FUnitRunnerAnimationTest::RunTest(const FString& Parameters)
+{
+    using namespace UnitRunnerTests;
+    FFixture F;
+    USkeletalMesh* Mesh = LoadObject<USkeletalMesh>(nullptr, TEXT("/Game/Art/Kaykit/Mage/Mage.Mage"));
+    UAnimSequence* Spawn = LoadObject<UAnimSequence>(nullptr, TEXT("/Game/Art/Kaykit/Animations/Rig_Medium_GeneralSpawn_Ground.Rig_Medium_GeneralSpawn_Ground"));
+    UAnimSequence* Death = LoadObject<UAnimSequence>(nullptr, TEXT("/Game/Art/Kaykit/Animations/Rig_Medium_GeneralDeath_A.Rig_Medium_GeneralDeath_A"));
+    if (!TestNotNull(TEXT("Mage mesh"), Mesh) || !TestNotNull(TEXT("Spawn sequence"), Spawn) || !TestNotNull(TEXT("Death sequence"), Death)) return false;
+    FUnitDefinition Data = *F.Data->FindRow<FUnitDefinition>(TEXT("Weak"), TEXT("animation test"));
+    Data.Visuals.SkeletalMesh = Mesh;
+    Data.Animations.AnimClass = UAnimInstance::StaticClass();
+    Data.Animations.SpawnMontage = UAnimMontage::CreateSlotAnimationAsDynamicMontage(Spawn, TEXT("DefaultSlot"));
+    Data.Animations.DeathMontage = UAnimMontage::CreateSlotAnimationAsDynamicMontage(Death, TEXT("DefaultSlot"));
+    Data.BaseStats.AttackDamage = 0.f;
+    F.Data->AddRow(TEXT("Animated"), Data);
+    AUnitCombatTestRunner* Runner = F.Runner();
+    Runner->Ally.RowName = Runner->Enemy.RowName = TEXT("Animated");
+    Runner->StartTest();
+    TestTrue(TEXT("Spawn enters preparation"), F.Until(Runner, EUnitCombatTestState::Preparing));
+    if (!IsValid(Runner->EnemyUnit)) return false;
+    UAnimInstance* Anim = Runner->EnemyUnit->Body->GetAnimInstance();
+    if (!TestNotNull(TEXT("Animation instance"), Anim)) return false;
+    TestTrue(TEXT("Spawn montage is playing"), Anim->Montage_IsPlaying(Data.Animations.SpawnMontage));
+    F.Tick(0.1f);
+    TestTrue(TEXT("Spawn delays combat despite StartDelay zero"), Runner->TestState == EUnitCombatTestState::Preparing);
+    TestTrue(TEXT("Combat starts after spawn"), F.Until(Runner, EUnitCombatTestState::Running));
+    FUnitDamageRequest Hit; Hit.Attacker = Runner->AllyUnit; Hit.RawDamage = 10000.f; Hit.Type = EUnitDamageType::TrueDamage;
+    Runner->EnemyUnit->ReceiveDamage(Hit);
+    TestTrue(TEXT("Death montage starts"), Anim->Montage_IsPlaying(Data.Animations.DeathMontage));
+    F.Tick();
+    TestTrue(TEXT("Team defeat finishes test"), Runner->TestState == EUnitCombatTestState::Finished);
+    TestTrue(TEXT("StopCombat preserves playing death montage"), Anim->Montage_IsPlaying(Data.Animations.DeathMontage));
+    F.Tick(0.2f);
+    TestTrue(TEXT("Death montage continues beyond stop blend-out"), Anim->Montage_IsPlaying(Data.Animations.DeathMontage));
+    Runner->bPlaySpawnAnimations = false;
+    Runner->RestartTest();
+    TestTrue(TEXT("Spawn animation can be disabled"), F.Until(Runner, EUnitCombatTestState::Running));
+    TestFalse(TEXT("Disabled spawn is not playing"), Runner->EnemyUnit->Body->GetAnimInstance()->Montage_IsPlaying(Data.Animations.SpawnMontage));
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FUnitRunnerMultiTest, "ProjectA.TestRunner.MultipleUnits",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FUnitRunnerMultiTest::RunTest(const FString& Parameters)
+{
+    using namespace UnitRunnerTests;
+    FFixture F; AUnitCombatTestRunner* Runner = F.Runner();
+    // 첫 사망 후에도 남은 팀원이 전투를 계속하는지 타이머 공격 없이 직접 확인한다.
+    Runner->bUseTimerAttackForTest = false;
+    FUnitCombatTestSide Extra; Extra.RowName = TEXT("Strong"); Extra.Row = 0; Extra.Column = 1; Extra.Stars = 2;
+    Runner->AdditionalAllies.Add(Extra);
+    Extra.RowName = TEXT("Weak"); Extra.Row = 5; Extra.Column = 3; Extra.Stars = 1;
+    Runner->AdditionalEnemies.Add(Extra);
+    Runner->StartTest();
+    TestTrue(TEXT("Two versus two starts"), F.Until(Runner, EUnitCombatTestState::Running));
+    TestEqual(TEXT("Four units spawned"), F.Units(), 4);
+    ABattleUnitBase* RemainingEnemy = Cast<ABattleUnitBase>(F.Board->GetTile(5,3)->OccupiedUnit);
+    ABattleUnitBase* ExtraAlly = Cast<ABattleUnitBase>(F.Board->GetTile(0,1)->OccupiedUnit);
+    if (!TestNotNull(TEXT("Additional enemy placed"), RemainingEnemy) || !TestNotNull(TEXT("Additional ally placed"), ExtraAlly)) return false;
+    TestEqual(TEXT("Additional ally stars applied"), ExtraAlly->StarLevel, 2);
+    TestTrue(TEXT("Additional units enter combat"), ExtraAlly->bInCombat && RemainingEnemy->bInCombat);
+    FUnitDamageRequest Hit; Hit.Attacker = Runner->AllyUnit; Hit.RawDamage = 10000.f; Hit.Type = EUnitDamageType::TrueDamage;
+    Runner->EnemyUnit->ReceiveDamage(Hit); F.Tick();
+    TestTrue(TEXT("First death does not finish team battle"), Runner->TestState == EUnitCombatTestState::Running && RemainingEnemy->bInCombat);
+    Hit.DamageId = FGuid::NewGuid(); RemainingEnemy->ReceiveDamage(Hit); F.Tick();
+    TestTrue(TEXT("Last enemy death finishes team battle"), Runner->TestState == EUnitCombatTestState::Finished);
+    TestFalse(TEXT("Additional units stop too"), ExtraAlly->bInCombat || RemainingEnemy->bInCombat);
+    TestTrue(TEXT("All team tiles released"), F.EmptyBoard());
+    Runner->RestartTest();
+    TestTrue(TEXT("Multiple unit restart works"), F.Until(Runner, EUnitCombatTestState::Running));
+    TestEqual(TEXT("Restart retains only four units"), F.Units(), 4);
+    Runner->StopTest(); TestEqual(TEXT("Stop cleans all units"), F.Units(), 0);
+    Runner->AdditionalAllies[0].Row = Runner->Ally.Row;
+    Runner->AdditionalAllies[0].Column = Runner->Ally.Column;
+    Runner->StartTest(); F.Until(Runner, EUnitCombatTestState::Running);
+    TestTrue(TEXT("Duplicate start tile fails"), Runner->TestState == EUnitCombatTestState::Failed);
+    TestEqual(TEXT("Duplicate tile leaves no units"), F.Units(), 0);
+    Runner->AdditionalAllies[0].Column = 1;
+    Runner->AdditionalEnemies[0].RowName = TEXT("Missing");
+    Runner->StartTest(); F.Until(Runner, EUnitCombatTestState::Running);
+    TestTrue(TEXT("Invalid additional row fails"), Runner->TestState == EUnitCombatTestState::Failed);
+    TestEqual(TEXT("Invalid additional row leaves no units"), F.Units(), 0);
     return true;
 }
 #endif

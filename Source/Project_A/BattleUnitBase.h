@@ -94,6 +94,8 @@ public:
     UFUNCTION(BlueprintCallable, Category="Unit|Setup") bool InitializeUnit(FDataTableRowHandle Data, EBattleTeam Team, int32 Stars, FString& Error);
     UFUNCTION(BlueprintCallable, CallInEditor, Category="Unit|Setup") bool RefreshUnitFromData();
     UFUNCTION(BlueprintCallable, Category="Unit|Setup") void ApplyVisuals();
+    // 초기화와 배치가 끝난 뒤 호출한다. 재생 실패/미설정은 0, 성공은 재생 시간을 반환한다.
+    UFUNCTION(BlueprintCallable, Category="Unit|Visual") float PlaySpawnAnimation();
     UFUNCTION(BlueprintCallable, Category="Unit|Stats") void RecalculateStats();
     UFUNCTION(BlueprintCallable, Category="Unit|Stats") bool SetStarLevel(int32 Stars);
     UFUNCTION(BlueprintSetter) void SetTeamType(EBattleTeam Team);
