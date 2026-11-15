@@ -14,6 +14,8 @@
 #include "Animation/AnimSequence.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Engine/SkeletalMesh.h"
+#include "Engine/StaticMesh.h"
+#include "Materials/MaterialInstanceDynamic.h"
 
 namespace UnitRunnerTests
 {
@@ -185,6 +187,10 @@ bool FUnitRunnerAnimationTest::RunTest(const FString& Parameters)
     Data.Animations.AnimClass = UAnimInstance::StaticClass();
     Data.Animations.SpawnMontage = UAnimMontage::CreateSlotAnimationAsDynamicMontage(Spawn, TEXT("DefaultSlot"));
     Data.Animations.DeathMontage = UAnimMontage::CreateSlotAnimationAsDynamicMontage(Death, TEXT("DefaultSlot"));
+    Data.Visuals.MainHand.Mesh = LoadObject<UStaticMesh>(nullptr, TEXT("/Game/Art/Kaykit/Weapons/sword_1handed.sword_1handed"));
+    Data.Visuals.MainHand.SocketName = TEXT("Weapon_R");
+    Data.Visuals.OffHand.Mesh = LoadObject<UStaticMesh>(nullptr, TEXT("/Game/Art/Kaykit/Weapons/shield_badge.shield_badge"));
+    Data.Visuals.OffHand.SocketName = TEXT("Weapon_L");
     Data.BaseStats.AttackDamage = 0.f;
     F.Data->AddRow(TEXT("Animated"), Data);
     AUnitCombatTestRunner* Runner = F.Runner();
@@ -201,11 +207,47 @@ bool FUnitRunnerAnimationTest::RunTest(const FString& Parameters)
     FUnitDamageRequest Hit; Hit.Attacker = Runner->AllyUnit; Hit.RawDamage = 10000.f; Hit.Type = EUnitDamageType::TrueDamage;
     Runner->EnemyUnit->ReceiveDamage(Hit);
     TestTrue(TEXT("Death montage starts"), Anim->Montage_IsPlaying(Data.Animations.DeathMontage));
+    FAnimMontageInstance* DeathInstance = Anim->GetActiveInstanceForMontage(Data.Animations.DeathMontage);
+    if (!TestNotNull(TEXT("Death instance"), DeathInstance)) return false;
+    TestFalse(TEXT("Death holds last pose per instance"), DeathInstance->bEnableAutoBlendOut);
+    TestTrue(TEXT("Source montage auto blend setting unchanged"), Data.Animations.DeathMontage->bEnableAutoBlendOut);
     F.Tick();
     TestTrue(TEXT("Team defeat finishes test"), Runner->TestState == EUnitCombatTestState::Finished);
     TestTrue(TEXT("StopCombat preserves playing death montage"), Anim->Montage_IsPlaying(Data.Animations.DeathMontage));
     F.Tick(0.2f);
     TestTrue(TEXT("Death montage continues beyond stop blend-out"), Anim->Montage_IsPlaying(Data.Animations.DeathMontage));
+    // 전투 종료 후에도 사망 연출 시간이 흐르고, 모션 종료 직후에는 아직 페이드하지 않는다.
+    for (float Elapsed = 0.25f; Elapsed < Death->GetPlayLength() + 0.2f; Elapsed += 0.05f) F.Tick();
+    TestEqual(TEXT("Death pose is visible during hold"), Runner->EnemyUnit->DeathOpacity, 1.f);
+    TestFalse(TEXT("Corpse remains visible during hold"), Runner->EnemyUnit->IsHidden());
+    Runner->EnemyUnit->StopCombat();
+    TestTrue(TEXT("Repeated stop keeps held death montage active"), Anim->Montage_IsActive(Data.Animations.DeathMontage));
+    F.Tick(0.5f);
+    const float Opacity = Runner->EnemyUnit->DeathOpacity;
+    TestTrue(TEXT("Corpse fades after hold even outside combat"), Opacity > 0.f && Opacity < 1.f);
+    for (UMeshComponent* Part : {static_cast<UMeshComponent*>(Runner->EnemyUnit->Body.Get()), static_cast<UMeshComponent*>(Runner->EnemyUnit->MainHand.Get()), static_cast<UMeshComponent*>(Runner->EnemyUnit->OffHand.Get())})
+    {
+        UMaterialInstanceDynamic* Material = Cast<UMaterialInstanceDynamic>(Part->GetMaterial(0));
+        if (!TestNotNull(TEXT("Body and weapons have fade instances"), Material)) return false;
+        TestTrue(TEXT("Body and weapons fade together"), FMath::IsNearlyEqual(Material->K2_GetScalarParameterValue(TEXT("UnitOpacity")), Opacity));
+    }
+    UMaterialInstanceDynamic* SurvivorMaterial = Cast<UMaterialInstanceDynamic>(Runner->AllyUnit->Body->GetMaterial(0));
+    if (!TestNotNull(TEXT("Survivor has separate material"), SurvivorMaterial)) return false;
+    TestEqual(TEXT("Survivor opacity unchanged"), SurvivorMaterial->K2_GetScalarParameterValue(TEXT("UnitOpacity")), 1.f);
+    for (int32 Index = 0; Index < 20; ++Index) F.Tick();
+    TestTrue(TEXT("Fully faded corpse hidden without destroying actor"), IsValid(Runner->EnemyUnit) && Runner->EnemyUnit->IsHidden());
+    TestEqual(TEXT("Fade completes at zero"), Runner->EnemyUnit->DeathOpacity, 0.f);
+    TestTrue(TEXT("Dead unit restores for next round"), Runner->EnemyUnit->ResetForRound());
+    TestFalse(TEXT("Round reset shows unit"), Runner->EnemyUnit->IsHidden());
+    TestEqual(TEXT("Round reset restores opacity"), Runner->EnemyUnit->DeathOpacity, 1.f);
+    TestFalse(TEXT("Round reset clears death pose"), Runner->EnemyUnit->Body->GetAnimInstance()->Montage_IsActive(Data.Animations.DeathMontage));
+    for (int32 Index = 0; Index < 40; ++Index) F.Tick();
+    TestFalse(TEXT("Old death fade cannot hide restored unit"), Runner->EnemyUnit->IsHidden());
+    Runner->EnemyUnit->DeathPoseHoldSeconds = Runner->EnemyUnit->DeathFadeSeconds = 0.f;
+    Runner->EnemyUnit->Definition.Animations.DeathMontage = nullptr;
+    Runner->EnemyUnit->StartCombat();
+    Hit.DamageId = FGuid::NewGuid(); Runner->EnemyUnit->ReceiveDamage(Hit); F.Tick();
+    TestTrue(TEXT("Missing montage and zero timings hide immediately on next tick"), Runner->EnemyUnit->IsHidden());
     Runner->bPlaySpawnAnimations = false;
     Runner->RestartTest();
     TestTrue(TEXT("Spawn animation can be disabled"), F.Until(Runner, EUnitCombatTestState::Running));
@@ -254,6 +296,43 @@ bool FUnitRunnerMultiTest::RunTest(const FString& Parameters)
     Runner->StartTest(); F.Until(Runner, EUnitCombatTestState::Running);
     TestTrue(TEXT("Invalid additional row fails"), Runner->TestState == EUnitCombatTestState::Failed);
     TestEqual(TEXT("Invalid additional row leaves no units"), F.Units(), 0);
+    return true;
+}
+// 현재 DT에 실제 지정된 몸체/머티리얼 오버라이드/무기도 페이드 가능한지 검증한다.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FUnitDeathMaterialWiringTest, "ProjectA.Unit.DeathFadeMaterialWiring",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FUnitDeathMaterialWiringTest::RunTest(const FString& Parameters)
+{
+    UDataTable* Table = LoadObject<UDataTable>(nullptr, TEXT("/Game/Data/Units/DT_Units.DT_Units"));
+    if (!TestNotNull(TEXT("Current unit table"), Table)) return false;
+    const auto CheckMaterial = [&](UMaterialInterface* Material, const FString& Label)
+    {
+        float Value = 0.f;
+        TestTrue(Label + TEXT(" supports UnitOpacity"), Material
+            && Material->GetScalarParameterValue(FMaterialParameterInfo(TEXT("UnitOpacity")), Value));
+        TestEqual(Label + TEXT(" defaults to visible"), Value, 1.f);
+    };
+    for (FName Name : {FName(TEXT("Knight")), FName(TEXT("Mage"))})
+    {
+        const FUnitDefinition* Row = Table->FindRow<FUnitDefinition>(Name, TEXT("Death material wiring"), false);
+        if (!TestNotNull(Name.ToString() + TEXT(" row"), Row)) return false;
+        USkeletalMesh* Mesh = Row->Visuals.SkeletalMesh;
+        if (!TestNotNull(Name.ToString() + TEXT(" body mesh"), Mesh)) return false;
+        for (int32 Index = 0; Index < Mesh->GetMaterials().Num(); ++Index)
+        {
+            UMaterialInterface* Material = Row->Visuals.MaterialOverrides.IsValidIndex(Index) && Row->Visuals.MaterialOverrides[Index]
+                ? Row->Visuals.MaterialOverrides[Index].Get() : Mesh->GetMaterials()[Index].MaterialInterface.Get();
+            CheckMaterial(Material, FString::Printf(TEXT("%s body %d"), *Name.ToString(), Index));
+        }
+        int32 HandIndex = 0;
+        for (const FUnitWeaponVisual& Hand : {Row->Visuals.MainHand, Row->Visuals.OffHand})
+        {
+            if (Hand.Mesh)
+                for (int32 Index = 0; Index < Hand.Mesh->GetStaticMaterials().Num(); ++Index)
+                    CheckMaterial(Hand.Mesh->GetMaterial(Index), FString::Printf(TEXT("%s hand %d material %d"), *Name.ToString(), HandIndex, Index));
+            ++HandIndex;
+        }
+    }
     return true;
 }
 #endif

@@ -12,6 +12,7 @@ class USceneComponent;
 class USkeletalMeshComponent;
 class UStaticMeshComponent;
 class ABattleUnitBase;
+class UMaterialInstanceDynamic;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FBattleUnitEvent, ABattleUnitBase*, Unit);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FBattleUnitActionEvent, ABattleUnitBase*, Unit, int32, ActionId);
@@ -56,6 +57,10 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, BlueprintSetter=SetTeamType, Category="Unit|Setup") EBattleTeam TeamType = EBattleTeam::Player;
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Unit|Setup", meta=(ClampMin="1", ClampMax="2")) int32 StarLevel = 1;
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Unit|Policy") FUnitCombatPolicy CombatPolicy;
+    // 사망 판정과 별개로 외형만 지연 제거한다. Actor는 다음 라운드 복구를 위해 유지한다.
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Unit|Death Visual", meta=(ClampMin="0")) float DeathPoseHoldSeconds = 0.5f;
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Unit|Death Visual", meta=(ClampMin="0")) float DeathFadeSeconds = 0.8f;
+    UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Transient, Category="Unit|Death Visual") float DeathOpacity = 1.f;
     UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Transient, Category="Unit|Data") FName UnitID;
     UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Transient, DuplicateTransient, Category="Unit|Data") bool bInitialized = false;
     UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Transient, Category="Unit|Data") FUnitDefinition Definition;
@@ -158,6 +163,10 @@ private:
     UPROPERTY(Transient) TObjectPtr<ABoardTile> PreparationTile = nullptr;
     UPROPERTY(Transient) TObjectPtr<ABoardTile> ReservedTile = nullptr;
     UPROPERTY(Transient) TMap<FName, FUnitStatModifier> Upgrades;
+    UPROPERTY(Transient) TArray<TObjectPtr<UMaterialInstanceDynamic>> DeathFadeMaterials;
+    float DeathVisualElapsed = 0.f;
+    float DeathAnimationSeconds = 0.f;
+    bool bDeathVisualActive = false;
     TArray<FSkillRuntime> SkillRuntime;
     TArray<FPendingProjectile> Projectiles;
     TArray<FAttackEnhancement> AttackEnhancements;
@@ -198,6 +207,10 @@ private:
     void CancelAction(bool bRefundMana = false);
     void ReleaseMove(bool bCompleted);
     void Die();
+    void CreateDeathFadeMaterials();
+    void SetDeathOpacity(float Opacity);
+    void ResetDeathVisual();
+    void TickDeathVisual(float Delta);
     void RefreshShieldTotal();
     void TickEffects(float Delta);
     void TickProjectiles(float Delta);

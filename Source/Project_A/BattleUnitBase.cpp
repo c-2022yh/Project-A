@@ -9,6 +9,7 @@
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/World.h"
+#include "Materials/MaterialInstanceDynamic.h"
 
 namespace
 {
@@ -206,8 +207,10 @@ float ABattleUnitBase::AddPermanentGrowth(FName SourceId, EUnitGrowthStat Stat, 
 
 void ABattleUnitBase::ClearVisuals()
 {
+    ResetDeathVisual();
+    DeathFadeMaterials.Empty();
     // 메시를 바꿔도 머티리얼 오버라이드는 남을 수 있으므로 반드시 비운다.
-    Body->Stop();
+    if (Body->GetAnimationMode() == EAnimationMode::AnimationSingleNode) Body->Stop();
     Body->SetAnimInstanceClass(nullptr);
     Body->SetAnimationMode(EAnimationMode::AnimationSingleNode);
     Body->SetAnimation(nullptr);
@@ -266,7 +269,56 @@ void ABattleUnitBase::ApplyVisuals()
     {
         Body->PlayAnimation(Animations.IdleAnimation, true);
     }
+    // 에디터 미리보기에는 동적 머티리얼을 남기지 않는다.
+    if (GetWorld() && GetWorld()->IsGameWorld()) CreateDeathFadeMaterials();
     OnVisualsApplied.Broadcast(this);
+}
+
+void ABattleUnitBase::CreateDeathFadeMaterials()
+{
+    DeathFadeMaterials.Empty();
+    // 인스턴스를 기물별로 분리해 같은 머티리얼을 쓰는 생존자에게 페이드가 전파되지 않게 한다.
+    for (UMeshComponent* Mesh : {static_cast<UMeshComponent*>(Body.Get()), static_cast<UMeshComponent*>(MainHand.Get()), static_cast<UMeshComponent*>(OffHand.Get())})
+        for (int32 Index = 0; Index < Mesh->GetNumMaterials(); ++Index)
+            if (Mesh->GetMaterial(Index))
+            {
+                float DefaultOpacity = 1.f;
+                if (Mesh->GetMaterial(Index)->GetScalarParameterValue(FMaterialParameterInfo(TEXT("UnitOpacity")), DefaultOpacity))
+                    if (UMaterialInstanceDynamic* Material = Mesh->CreateDynamicMaterialInstance(Index))
+                        DeathFadeMaterials.Add(Material);
+            }
+    SetDeathOpacity(1.f);
+}
+
+void ABattleUnitBase::SetDeathOpacity(float Opacity)
+{
+    DeathOpacity = Fraction(Opacity);
+    for (UMaterialInstanceDynamic* Material : DeathFadeMaterials)
+        if (IsValid(Material)) Material->SetScalarParameterValue(TEXT("UnitOpacity"), DeathOpacity);
+}
+
+void ABattleUnitBase::ResetDeathVisual()
+{
+    bDeathVisualActive = false;
+    DeathVisualElapsed = DeathAnimationSeconds = 0.f;
+    SetDeathOpacity(1.f);
+    SetActorHiddenInGame(false);
+}
+
+void ABattleUnitBase::TickDeathVisual(float Delta)
+{
+    if (!bIsDead || !bDeathVisualActive) return;
+    DeathVisualElapsed += Delta;
+    const float FadeElapsed = DeathVisualElapsed - DeathAnimationSeconds - Positive(DeathPoseHoldSeconds);
+    if (FadeElapsed < 0.f) return;
+    const float FadeDuration = Positive(DeathFadeSeconds);
+    SetDeathOpacity(FadeDuration > 0.f ? 1.f - FadeElapsed / FadeDuration : 0.f);
+    if (DeathOpacity <= 0.f)
+    {
+        // 외형만 숨긴다. 보유 기물과 준비 위치는 ResetForRound에서 재사용한다.
+        SetActorHiddenInGame(true);
+        bDeathVisualActive = false;
+    }
 }
 
 
@@ -449,7 +501,7 @@ void ABattleUnitBase::CancelAction(bool bRefundMana)
         // 사망 다음 프레임의 StopCombat도 이 함수를 호출한다.
         // 이미 재생 중인 사망 연출은 유지하고, 사망 전 공격/시전 취소는 기존대로 처리한다.
         const bool bPlayingDeath = bIsDead && Definition.Animations.DeathMontage
-            && Anim->Montage_IsPlaying(Definition.Animations.DeathMontage);
+            && Anim->Montage_IsActive(Definition.Animations.DeathMontage);
         if (!bPlayingDeath) Anim->Montage_Stop(0.1f);
     }
     ChangeAction(bIsDead ? EUnitActionState::Dead : EUnitActionState::Idle);
@@ -463,8 +515,17 @@ void ABattleUnitBase::Die()
     if (IsValid(BoardManager)) BoardManager->ReleaseUnitTiles(this);
     else if (IsValid(CurrentTile) && CurrentTile->OccupiedUnit == this) CurrentTile->ClearTile();
     SelectionCollision->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+    DeathVisualElapsed = DeathAnimationSeconds = 0.f;
+    SetDeathOpacity(1.f);
+    bDeathVisualActive = true;
     if (Definition.Animations.DeathMontage)
-        if (UAnimInstance* Anim = Body->GetAnimInstance()) Anim->Montage_Play(Definition.Animations.DeathMontage);
+        if (UAnimInstance* Anim = Body->GetAnimInstance())
+        {
+            DeathAnimationSeconds = Positive(Anim->Montage_Play(Definition.Animations.DeathMontage));
+            // 공유 몽타주 에셋 대신 이 기물의 재생 인스턴스만 마지막 자세를 유지한다.
+            if (FAnimMontageInstance* Instance = Anim->GetActiveInstanceForMontage(Definition.Animations.DeathMontage))
+                Instance->bEnableAutoBlendOut = false;
+        }
     // Actor는 파괴하지 않는다. 이미 발사한 탄은 유지하고 전투 종료 때 일괄 취소한다.
     OnUnitDied.Broadcast(this);
 }
@@ -633,7 +694,10 @@ void ABattleUnitBase::TickEffects(float Delta)
 void ABattleUnitBase::Tick(float DeltaSeconds)
 {
     Super::Tick(DeltaSeconds);
-    if (!bInCombat || DeltaSeconds <= 0.f || !FMath::IsFinite(DeltaSeconds)) return;
+    if (DeltaSeconds <= 0.f || !FMath::IsFinite(DeltaSeconds)) return;
+    // 마지막 적 사망으로 StopCombat이 호출된 뒤에도 사망 연출은 끝까지 진행한다.
+    TickDeathVisual(DeltaSeconds);
+    if (!bInCombat) return;
     TickProjectiles(DeltaSeconds);
     if (!bInCombat || !IsAlive()) return;
     if (bCombatStartPending)
