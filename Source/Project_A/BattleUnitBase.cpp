@@ -10,6 +10,8 @@
 #include "Components/StaticMeshComponent.h"
 #include "Engine/World.h"
 #include "Materials/MaterialInstanceDynamic.h"
+#include "Components/WidgetComponent.h"
+#include "UI/UnitStatusWidget.h"
 
 namespace
 {
@@ -60,6 +62,18 @@ ABattleUnitBase::ABattleUnitBase()
     SelectionCollision->SetCollisionResponseToAllChannels(ECR_Ignore);
     SelectionCollision->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
     SelectionCollision->SetGenerateOverlapEvents(false);
+    // 모델 회전/크기 보정과 분리한 화면 공간 위젯이다. 선택 클릭을 가로채지 않는다.
+    StatusWidget = CreateDefaultSubobject<UWidgetComponent>(TEXT("StatusWidget"));
+    StatusWidget->SetupAttachment(SceneRoot);
+    StatusWidget->SetWidgetSpace(EWidgetSpace::Screen);
+    StatusWidget->SetWidgetClass(UUnitStatusWidget::StaticClass());
+    StatusWidget->SetDrawSize(FVector2D(128.f, 42.f));
+    StatusWidget->SetDrawAtDesiredSize(true);
+    StatusWidget->SetPivot(FVector2D(0.5f, 1.f));
+    StatusWidget->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+    StatusWidget->SetGenerateOverlapEvents(false);
+    StatusWidget->SetVisibility(false);
+    StatusWidgetClass = TSoftClassPtr<UUnitStatusWidget>(FSoftObjectPath(TEXT("/Game/BluePrints/Units/UI/WBP_UnitStatus.WBP_UnitStatus_C")));
 }
 
 void ABattleUnitBase::OnConstruction(const FTransform& Transform)
@@ -75,6 +89,7 @@ void ABattleUnitBase::BeginPlay()
 {
     Super::BeginPlay();
     if (!bInitialized && UnitData.DataTable) RefreshUnitFromData();
+    RefreshStatusWidget();
 }
 
 bool ABattleUnitBase::InitializeUnit(FDataTableRowHandle Data, EBattleTeam Team, int32 Stars, FString& Error)
@@ -279,6 +294,30 @@ void ABattleUnitBase::ApplyVisuals()
     // 에디터 미리보기에는 동적 머티리얼을 남기지 않는다.
     if (GetWorld() && GetWorld()->IsGameWorld()) CreateDeathFadeMaterials();
     OnVisualsApplied.Broadcast(this);
+    RefreshStatusWidget();
+}
+
+void ABattleUnitBase::RefreshStatusWidget()
+{
+    if (!GetWorld() || !GetWorld()->IsGameWorld() || !HasActorBegunPlay() || !StatusWidget) return;
+    StatusWidget->SetVisibility(bShowStatusWidget && bInitialized);
+    if (!bShowStatusWidget || !bInitialized) return;
+    UClass* WidgetClass = StatusWidgetClass.IsNull() ? nullptr : StatusWidgetClass.LoadSynchronous();
+    StatusWidget->SetWidgetClass(WidgetClass ? WidgetClass : UUnitStatusWidget::StaticClass());
+    StatusWidget->InitWidget();
+    if (UUnitStatusWidget* Widget = Cast<UUnitStatusWidget>(StatusWidget->GetUserWidgetObject()))
+    {
+        Widget->SetUnit(this);
+        StatusWidget->SetDrawSize(Widget->GetStatusDrawSize());
+    }
+    float Top = GetActorLocation().Z + GetHealthBarHeight();
+    if (Body->GetSkeletalMeshAsset())
+    {
+        const FBoxSphereBounds BodyBounds = Body->CalcBounds(Body->GetComponentTransform());
+        Top = BodyBounds.Origin.Z + BodyBounds.BoxExtent.Z;
+    }
+    // 실제 몸체의 월드 높이로 계산해 DT Scale이 달라도 머리 위에 놓는다.
+    StatusWidget->SetWorldLocation(FVector(GetActorLocation().X, GetActorLocation().Y, Top + StatusWidgetHeightOffset));
 }
 
 void ABattleUnitBase::CreateDeathFadeMaterials()

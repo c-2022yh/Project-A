@@ -13,6 +13,8 @@ class USkeletalMeshComponent;
 class UStaticMeshComponent;
 class ABattleUnitBase;
 class UMaterialInstanceDynamic;
+class UWidgetComponent;
+class UUnitStatusWidget;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FBattleUnitEvent, ABattleUnitBase*, Unit);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FBattleUnitActionEvent, ABattleUnitBase*, Unit, int32, ActionId);
@@ -52,6 +54,10 @@ public:
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Unit|Components") TObjectPtr<UStaticMeshComponent> MainHand;
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Unit|Components") TObjectPtr<UStaticMeshComponent> OffHand;
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Unit|Components") TObjectPtr<UCapsuleComponent> SelectionCollision;
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Unit|Components") TObjectPtr<UWidgetComponent> StatusWidget;
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Unit|Status Widget") bool bShowStatusWidget = true;
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Unit|Status Widget") TSoftClassPtr<UUnitStatusWidget> StatusWidgetClass;
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Unit|Status Widget") float StatusWidgetHeightOffset = 18.f;
     UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Transient, Category="Unit|Board") TObjectPtr<ABoardManager> BoardManager = nullptr;
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Unit|Setup") FDataTableRowHandle UnitData;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, BlueprintSetter=SetTeamType, Category="Unit|Setup") EBattleTeam TeamType = EBattleTeam::Player;
@@ -99,6 +105,7 @@ public:
     UFUNCTION(BlueprintCallable, Category="Unit|Setup") bool InitializeUnit(FDataTableRowHandle Data, EBattleTeam Team, int32 Stars, FString& Error);
     UFUNCTION(BlueprintCallable, CallInEditor, Category="Unit|Setup") bool RefreshUnitFromData();
     UFUNCTION(BlueprintCallable, Category="Unit|Setup") void ApplyVisuals();
+    UFUNCTION(BlueprintCallable, Category="Unit|Visual") void RefreshStatusWidget();
     // 초기화와 배치가 끝난 뒤 호출한다. 재생 실패/미설정은 0, 성공은 재생 시간을 반환한다.
     UFUNCTION(BlueprintCallable, Category="Unit|Visual") float PlaySpawnAnimation();
     UFUNCTION(BlueprintCallable, Category="Unit|Stats") void RecalculateStats();
