@@ -1,34 +1,19 @@
-﻿#include "ItemManager.h"
+#include "ItemManager.h"
 
-void AItemManager::FState::ReturnEquipment(FGuid UnitId)
+void AItemManager::PlanReturn(TArray<FName>& Proposed, const TArray<FName>& Equipment)
 {
-    TArray<FName> Equipped;
-    if (Equipment.RemoveAndCopyValue(UnitId, Equipped)) Inventory.Append(Equipped);
+    Proposed.Append(Equipment);
 }
 
-void AItemManager::FState::InheritEquipment(const TArray<FGuid>& Materials, FGuid Kept)
+void AItemManager::LimitInheritedEquipment(TArray<FName>& Equipment, TArray<FName>& Returned)
 {
-    TArray<FName> Inherited;
-    for (FGuid MaterialId : Materials)
+    while (Equipment.Num() > EquipmentSlots)
     {
-        TArray<FName> Equipped;
-        if (Equipment.RemoveAndCopyValue(MaterialId, Equipped)) Inherited.Append(Equipped);
+        const int32 Index = FMath::RandHelper(Equipment.Num());
+        Returned.Add(Equipment[Index]);
+        Equipment.RemoveAtSwap(Index);
     }
-    while (Inherited.Num() > EquipmentSlots)
-    {
-        const int32 Index = FMath::RandHelper(Inherited.Num());
-        Inventory.Add(Inherited[Index]);
-        Inherited.RemoveAtSwap(Index);
-    }
-    if (!Inherited.IsEmpty()) Equipment.Add(Kept, MoveTemp(Inherited));
 }
-
-TArray<FName> AItemManager::GetEquipment(FGuid UnitId) const
-{
-    const TArray<FName>* Equipped = State.Equipment.Find(UnitId);
-    return Equipped ? *Equipped : TArray<FName>();
-}
-
 bool AItemManager::GetItem(FName Id, FItemDefinition& Item) const
 {
     if (!ItemDefinitions || Id.IsNone() || ItemDefinitions->GetRowStruct() != FItemDefinition::StaticStruct()) return false;
@@ -38,25 +23,11 @@ bool AItemManager::GetItem(FName Id, FItemDefinition& Item) const
     return true;
 }
 
-FItemBonuses AItemManager::GetBonuses(const FState& Proposed, FGuid UnitId) const
-{
-    FItemBonuses Bonuses;
-    if (const TArray<FName>* Equipped = Proposed.Equipment.Find(UnitId))
-    {
-        for (FName ItemId : *Equipped)
-        {
-            FItemDefinition Item;
-            if (GetItem(ItemId, Item)) Bonuses.Add(Item.Bonuses);
-        }
-    }
-    return Bonuses;
-}
-
 bool AItemManager::GrantItem(FName Id)
 {
     FItemDefinition Item;
     if (!GetItem(Id, Item)) return false;
-    State.Inventory.Add(Id);
+    Inventory.Add(Id);
     return true;
 }
 
@@ -72,26 +43,24 @@ void AItemManager::TryGrantKillDrop()
     if (!Candidates.IsEmpty()) GrantItem(Candidates[FMath::RandHelper(Candidates.Num())]);
 }
 
-ETransactionResult AItemManager::PlanEquipmentChange(FState& Proposed, FGuid UnitId, FName ItemId,
+ETransactionResult AItemManager::PlanEquipmentChange(TArray<FName>& Proposed, TArray<FName>& Equipment, FName ItemId,
     TOptional<int32> UnequipSlot) const
 {
-    TArray<FName>& Equipped = Proposed.Equipment.FindOrAdd(UnitId);
     if (UnequipSlot.IsSet())
     {
         const int32 Slot = UnequipSlot.GetValue();
-        if (!Equipped.IsValidIndex(Slot)) return ETransactionResult::InvalidSelection;
-        Proposed.Inventory.Add(Equipped[Slot]);
-        Equipped.RemoveAt(Slot);
-        if (Equipped.IsEmpty()) Proposed.Equipment.Remove(UnitId);
+        if (!Equipment.IsValidIndex(Slot)) return ETransactionResult::InvalidSelection;
+        Proposed.Add(Equipment[Slot]);
+        Equipment.RemoveAt(Slot);
     }
     else
     {
         FItemDefinition Definition;
-        const int32 Index = Proposed.Inventory.IndexOfByKey(ItemId);
+        const int32 Index = Proposed.IndexOfByKey(ItemId);
         if (Index == INDEX_NONE || !GetItem(ItemId, Definition)) return ETransactionResult::InvalidSelection;
-        if (Equipped.Num() >= EquipmentSlots) return ETransactionResult::NoSpace;
-        Equipped.Add(ItemId);
-        Proposed.Inventory.RemoveAt(Index);
+        if (Equipment.Num() >= EquipmentSlots) return ETransactionResult::NoSpace;
+        Equipment.Add(ItemId);
+        Proposed.RemoveAt(Index);
     }
 
     return ETransactionResult::Success;

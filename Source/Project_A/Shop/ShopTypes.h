@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include "CoreMinimal.h"
 #include "Engine/DataTable.h"
@@ -8,6 +8,24 @@ UENUM(BlueprintType)
 enum class EShopPhase : uint8
 {
     Inactive, Preparation, Combat, Settlement, RewardSelection, Finished
+};
+
+USTRUCT(BlueprintType)
+struct FShopMatchState
+{
+    GENERATED_BODY()
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Shop")
+    EShopPhase Phase = EShopPhase::Inactive;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Shop")
+    int32 Round = 0;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Shop")
+    int32 DeploymentLimit = 0;
+
+    bool CanTrade() const { return Phase == EShopPhase::Preparation || Phase == EShopPhase::Combat; }
+    bool CanManageBoard() const { return Phase == EShopPhase::Preparation || Phase == EShopPhase::RewardSelection; }
 };
 
 UENUM(BlueprintType)
@@ -170,7 +188,10 @@ struct FRosterUnitChange
     FUnitPosition Destination;
 
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Shop")
-    FItemBonuses ItemBonuses;
+    bool bReplaceEquipment = false;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Shop")
+    TArray<FName> Equipment;
 
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Shop")
     float StarStatMultiplier = 1;

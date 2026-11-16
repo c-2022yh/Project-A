@@ -1,11 +1,11 @@
-﻿#pragma once
+#pragma once
 
 #include "GameFramework/Actor.h"
-#include "ItemManager.h"
+#include "RosterManager.h"
 #include "ShopTypes.h"
 #include "ShopTransactionManager.generated.h"
 
-class ARosterManager;
+class AItemManager;
 class AShopManager;
 
 UCLASS(Blueprintable)
@@ -27,13 +27,13 @@ public:
     FManagerChanged OnRewardReceived;
 
     UFUNCTION(BlueprintCallable, Category="Transactions")
-    bool EnterPreparation(int32 Round, int32 DeploymentLimit);
+    bool EnterPreparation();
 
     UFUNCTION(BlueprintCallable, Category="Transactions")
     ETransactionResult GrantStartingUnit(FName UnitId);
 
     UFUNCTION(BlueprintCallable, Category="Transactions")
-    bool BeginRewardSelection(int32 NextDeploymentLimit);
+    bool OpenRewards();
 
     UFUNCTION(BlueprintCallable, Category="Transactions")
     bool GrantKillReward(FGuid DefeatedEnemyId);
@@ -48,10 +48,13 @@ public:
     ETransactionResult RequestReward(int32 Slot, int32 SelectionRevision);
 
     UFUNCTION(BlueprintCallable, Category="Transactions")
-    ETransactionResult RequestMove(FGuid UnitId, FUnitPosition Destination);
+    ETransactionResult RequestReroll();
 
     UFUNCTION(BlueprintCallable, Category="Transactions")
-    ETransactionResult RequestMoveToBench(FGuid UnitId, int32 Slot);
+    ETransactionResult RequestShopLock(bool bLocked);
+
+    UFUNCTION(BlueprintCallable, Category="Transactions")
+    bool GrantRoundGold(int32 Amount);
 
     UFUNCTION(BlueprintCallable, Category="Transactions")
     ETransactionResult RequestEquip(FGuid UnitId, FName ItemId);
@@ -62,10 +65,15 @@ public:
     UFUNCTION(BlueprintPure, Category="Transactions")
     bool IsConfigured() const;
 
+    UFUNCTION(BlueprintPure, Category="Transactions")
+    FShopMatchState GetMatchState() const;
+
 private:
-    ETransactionResult AddUnit(const FShopOffer& Offer, int32 Stars, bool bReward);
+    bool CanStartRequest() const;
+    ETransactionResult AddUnit(const FShopOffer& Offer, int32 Stars, const FShopMatchState& Match);
     ETransactionResult ChangeEquipment(FGuid UnitId, FName ItemId, TOptional<int32> UnequipSlot);
-    void PlanMerge(FName UnitId, const FRosterUnit* Incoming, FUnitPosition Destination,
-        TArray<FRosterUnitChange>& Changes, AItemManager::FState& ItemState) const;
-    bool ApplyChanges(TArray<FRosterUnitChange>& Changes, AItemManager::FState&& ItemState, EShopPhase Phase, int32 Limit);
+    bool ApplyMerges(TArray<FRosterUnitChange>& Changes, const TArray<ARosterManager::FMerge>& Merges,
+        const FShopMatchState& Match);
+    bool CommitChanges(const TArray<FRosterUnitChange>& Changes, TArray<FName>&& Inventory,
+        const FShopMatchState& Match);
 };

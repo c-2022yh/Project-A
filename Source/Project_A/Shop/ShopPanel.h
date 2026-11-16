@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include "CoreMinimal.h"
 #include "ShopTypes.h"
@@ -53,7 +53,7 @@ private:
 
     void ClearBindings();
     void Draw(AHUD* HUD, UCanvas* Canvas);
-    void DrawShop(AHUD& HUD, const AShopManager& Manager);
+    void DrawShop(AHUD& HUD, const AShopManager& Manager, const FShopMatchState& Match);
     void DrawItemsAndUnitActions(AHUD& HUD, const AShopTransactionManager& Manager);
     void DrawRewards(AHUD& HUD, const AShopTransactionManager& Manager);
     void DrawProfile(AHUD& HUD, const AShopTransactionManager& Manager, FGuid Id, FVector2D Position);

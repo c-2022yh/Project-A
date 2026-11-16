@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
@@ -50,8 +50,18 @@ public:
     UFUNCTION(BlueprintPure, Category="Roster")
     FGuid GetHoveredUnit() const;
 
+    UFUNCTION(BlueprintPure, Category="Roster")
+    bool GetUnitEquipment(FGuid Id, TArray<FName>& Equipment) const;
+
 private:
     friend class AShopTransactionManager;
+    friend class UBenchManager;
+
+    struct FMerge
+    {
+        TArray<FGuid> Materials;
+        FGuid Kept;
+    };
 
     UPROPERTY(VisibleAnywhere, Category="Roster")
     TObjectPtr<UBenchManager> Bench;
@@ -64,7 +74,10 @@ private:
     FRosterUnitChange MakeChange(ERosterUnitEdit Edit, const FRosterUnit& Unit, FUnitPosition Destination = {}) const;
     bool Apply(const TArray<FRosterUnitChange>& Changes, EShopPhase Phase, int32 Limit) const;
     void Commit(const TArray<FRosterUnitChange>& Changes);
-    TArray<const FRosterUnit*, TInlineAllocator<3>> FindMergeMaterials(FName UnitId, int32 Count,
-        const TArray<FRosterUnitChange>& PendingChanges) const;
+    ETransactionResult PlanAdmission(const FShopOffer& Offer, int32 Stars, FUnitPosition BenchSlot,
+        bool bMergeNow, TArray<FRosterUnitChange>& Changes, TArray<FMerge>& Merges) const;
+    void PlanPendingMerges(TArray<FRosterUnitChange>& Changes, TArray<FMerge>& Merges) const;
+    bool PlanMerge(FName UnitId, const FRosterUnit* Incoming, TArray<FRosterUnitChange>& Changes, FMerge& Merge) const;
+
     void NotifyChanged();
 };

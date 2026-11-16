@@ -1,6 +1,7 @@
-﻿#include "ShopPanel.h"
+#include "ShopPanel.h"
 #include "RosterManager.h"
 #include "ShopManager.h"
+#include "ItemManager.h"
 #include "ShopTransactionManager.h"
 #include "Engine/Canvas.h"
 #include "Engine/LocalPlayer.h"
@@ -108,13 +109,13 @@ void UShopPanel::Draw(AHUD* HUD, UCanvas* Canvas)
 {
     if (!HUD || !Canvas || HUD->GetWorld() != GetWorld()) return;
     AShopTransactionManager* Manager = Transactions.Get();
-    if (!Manager || !Manager->IsConfigured() || Manager->Shop->GetPhase() == EShopPhase::Inactive)
+    if (!Manager || !Manager->IsConfigured() || Manager->GetMatchState().Phase == EShopPhase::Inactive)
     {
         Buttons.Reset();
         Transactions.Reset();
         for (TActorIterator<AShopTransactionManager> It(GetWorld()); It; ++It)
         {
-            if (!It->IsConfigured() || It->Shop->GetPhase() == EShopPhase::Inactive) continue;
+            if (!It->IsConfigured() || It->GetMatchState().Phase == EShopPhase::Inactive) continue;
             Transactions = *It;
             break;
         }
@@ -144,9 +145,10 @@ void UShopPanel::Draw(AHUD* HUD, UCanvas* Canvas)
 
     FRosterUnit Unit;
     if (Selected.IsValid() && !Manager->Roster->GetUnit(Selected, Unit)) Selected.Invalidate();
-    DrawShop(*HUD, *Manager->Shop);
+    const FShopMatchState Match = Manager->GetMatchState();
+    DrawShop(*HUD, *Manager->Shop, Match);
     DrawItemsAndUnitActions(*HUD, *Manager);
-    if (Manager->Shop->GetPhase() == EShopPhase::RewardSelection) DrawRewards(*HUD, *Manager);
+    if (Match.Phase == EShopPhase::RewardSelection) DrawRewards(*HUD, *Manager);
 
     float X, Y;
     if (PC->GetMousePosition(X, Y))
@@ -158,17 +160,17 @@ void UShopPanel::Draw(AHUD* HUD, UCanvas* Canvas)
     }
 }
 
-void UShopPanel::DrawShop(AHUD& HUD, const AShopManager& Manager)
+void UShopPanel::DrawShop(AHUD& HUD, const AShopManager& Manager, const FShopMatchState& Match)
 {
     const float Width = FMath::Min(700.0f, static_cast<float>(ViewSize.X) - 32.0f);
     const float X = (static_cast<float>(ViewSize.X) - Width) / 2;
     const float Y = static_cast<float>(ViewSize.Y) - 160;
     HUD.DrawRect(PanelBackground, X, Y, Width, 94);
-    HUD.DrawText(FString::Printf(TEXT("R%d   |   %d GOLD   |   LIMIT %d"), Manager.GetRound(), Manager.GetGold(), Manager.GetDeploymentLimit()),
+    HUD.DrawText(FString::Printf(TEXT("R%d   |   %d GOLD   |   LIMIT %d"), Match.Round, Manager.GetGold(), Match.DeploymentLimit),
         GoldColor, X + 12, Y + 12);
     if (!Feedback.IsEmpty()) HUD.DrawText(Feedback, Muted, X + 12, Y - 22);
 
-    const bool bTrade = Manager.GetPhase() == EShopPhase::Preparation || Manager.GetPhase() == EShopPhase::Combat;
+    const bool bTrade = Match.CanTrade();
     AddButton(HUD, TEXT("Reroll  2G"), { EAction::Reroll, { X + Width - 206, Y + 7 }, { 94, 27 } }, bTrade);
     AddButton(HUD, Manager.IsShopLocked() ? TEXT("Unlock") : TEXT("Lock"),
         { EAction::Lock, { X + Width - 104, Y + 7 }, { 94, 27 } }, bTrade, Manager.IsShopLocked());
@@ -190,7 +192,7 @@ void UShopPanel::DrawItemsAndUnitActions(AHUD& HUD, const AShopTransactionManage
 {
     const ARosterManager& Roster = *Manager.Roster;
     const AItemManager& Items = *Manager.Items;
-    const EShopPhase Phase = Manager.Shop->GetPhase();
+    const EShopPhase Phase = Manager.GetMatchState().Phase;
     const bool bManageBoard = Phase == EShopPhase::Preparation || Phase == EShopPhase::RewardSelection;
     const bool bManageBench = bManageBoard || Phase == EShopPhase::Combat;
     const float Y = static_cast<float>(ViewSize.Y) - 160;
@@ -220,7 +222,8 @@ void UShopPanel::DrawItemsAndUnitActions(AHUD& HUD, const AShopTransactionManage
     const float ActionsY = 109;
     AddButton(HUD, TEXT("Sell"), { EAction::Sell, { X, ActionsY }, { 70, 26 }, 0, Selected },
         bManageBoard || (bManageBench && !bSelectedBoardUnit));
-    const TArray<FName> Equipment = Items.GetEquipment(Unit.Id);
+    TArray<FName> Equipment;
+    Roster.GetUnitEquipment(Unit.Id, Equipment);
     for (int32 Slot = 0; Slot < Equipment.Num(); ++Slot)
     {
         AddButton(HUD, ItemLabel(Items, Equipment[Slot]) + TEXT(" x"),
@@ -274,7 +277,8 @@ void UShopPanel::DrawProfile(AHUD& HUD, const AShopTransactionManager& Manager, 
             FLinearColor::White, X + 8, Y + 44);
     }
     TArray<FString> Items;
-    const TArray<FName> Equipment = Manager.Items->GetEquipment(Id);
+    TArray<FName> Equipment;
+    Manager.Roster->GetUnitEquipment(Id, Equipment);
     for (FName Item : Equipment)
     {
         FItemDefinition Definition;
@@ -336,8 +340,8 @@ void UShopPanel::RunAction(const FButton& Button, AShopTransactionManager& Manag
     switch (Button.Action)
     {
         case EAction::Buy: Result = Manager.RequestBuy(Button.Index, Button.Revision); break;
-        case EAction::Reroll: Result = Manager.Shop->RequestReroll(); break;
-        case EAction::Lock: Result = Manager.Shop->RequestShopLock(!Manager.Shop->IsShopLocked()); break;
+        case EAction::Reroll: Result = Manager.RequestReroll(); break;
+        case EAction::Lock: Result = Manager.RequestShopLock(!Manager.Shop->IsShopLocked()); break;
         case EAction::Equip: Result = Manager.RequestEquip(Selected, Button.Item); break;
         case EAction::Unequip: Result = Manager.RequestUnequip(Button.Unit, Button.Index); break;
         case EAction::Sell: Result = Manager.RequestSell(Button.Unit); break;

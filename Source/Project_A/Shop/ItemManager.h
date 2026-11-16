@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
@@ -22,10 +22,7 @@ public:
     float KillItemChance = 0;
 
     UFUNCTION(BlueprintPure, Category="Items")
-    TArray<FName> GetInventory() const { return State.Inventory; }
-
-    UFUNCTION(BlueprintPure, Category="Items")
-    TArray<FName> GetEquipment(FGuid UnitId) const;
+    TArray<FName> GetInventory() const { return Inventory; }
 
     UFUNCTION(BlueprintPure, Category="Items")
     bool GetItem(FName Id, FItemDefinition& Item) const;
@@ -33,21 +30,13 @@ public:
 private:
     friend class AShopTransactionManager;
 
-    struct FState
-    {
-        TArray<FName> Inventory;
-        TMap<FGuid, TArray<FName>> Equipment;
+    TArray<FName> Inventory;
 
-        void ReturnEquipment(FGuid UnitId);
-        void InheritEquipment(const TArray<FGuid>& Materials, FGuid Kept);
-    };
-
-    FState State;
-
-    FState Snapshot() const { return State; }
-    void Commit(FState&& Proposed) { State = MoveTemp(Proposed); }
-    FItemBonuses GetBonuses(const FState& Proposed, FGuid UnitId) const;
-    ETransactionResult PlanEquipmentChange(FState& Proposed, FGuid UnitId, FName ItemId, TOptional<int32> UnequipSlot) const;
+    void Commit(TArray<FName>&& Proposed) { Inventory = MoveTemp(Proposed); }
+    static void PlanReturn(TArray<FName>& Proposed, const TArray<FName>& Equipment);
+    static void LimitInheritedEquipment(TArray<FName>& Equipment, TArray<FName>& Returned);
+    ETransactionResult PlanEquipmentChange(TArray<FName>& Proposed, TArray<FName>& Equipment,
+        FName ItemId, TOptional<int32> UnequipSlot) const;
     bool GrantItem(FName Id);
     void TryGrantKillDrop();
 };

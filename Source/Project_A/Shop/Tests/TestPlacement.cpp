@@ -1,4 +1,4 @@
-﻿#include "TestPlacement.h"
+#include "TestPlacement.h"
 
 namespace
 {
@@ -21,20 +21,12 @@ FGuid UTestPlacement::GetOccupant_Implementation(FUnitPosition Position) const
     return {};
 }
 
-FUnitPosition UTestPlacement::FindRewardTile_Implementation(int32 DeploymentLimit) const
+bool UTestPlacement::GetUnitEquipment_Implementation(FGuid Id, TArray<FName>& Equipment) const
 {
-    int32 Deployed = 0;
-    for (const auto& Entry : Positions)
-        if (Entry.Value.Location == EUnitLocation::Board) ++Deployed;
-    if (Deployed >= DeploymentLimit) return {};
-    for (int32 Slot = 0; Slot < AvailableBoardTiles; ++Slot)
-    {
-        const FUnitPosition Position { EUnitLocation::Board, 0, Slot };
-        if (!GetOccupant_Implementation(Position).IsValid()) return Position;
-    }
-    return {};
+    if (!bEquipmentApiAvailable || !Positions.Contains(Id)) return false;
+    Equipment = UnitEquipment.FindRef(Id);
+    return true;
 }
-
 bool UTestPlacement::ApplyUnitChanges_Implementation(const TArray<FRosterUnitChange>& Changes, EShopPhase Phase, int32 Limit)
 {
     if (OnApply) OnApply();
@@ -49,6 +41,7 @@ bool UTestPlacement::ApplyUnitChanges_Implementation(const TArray<FRosterUnitCha
     for (const FRosterUnitChange& Change : Changes)
     {
         if (Change.Edit != ERosterUnitEdit::Add && Change.Edit != ERosterUnitEdit::Move) continue;
+        if (Change.Destination.Location == EUnitLocation::Board && Change.Destination.Column >= AvailableBoardTiles) return false;
         for (const auto& Entry : Next)
             if (SameSlot(Entry.Value, Change.Destination)) return false;
         Next.Add(Change.Unit.Id, Change.Destination);
@@ -58,5 +51,10 @@ bool UTestPlacement::ApplyUnitChanges_Implementation(const TArray<FRosterUnitCha
         if (Entry.Value.Location == EUnitLocation::Board) ++Deployed;
     if (Phase != EShopPhase::Inactive && Deployed > Limit) return false;
     Positions = MoveTemp(Next);
+    for (const auto& Change : Changes)
+    {
+        if (Change.Edit == ERosterUnitEdit::Remove) UnitEquipment.Remove(Change.Unit.Id);
+        else if (Change.bReplaceEquipment) UnitEquipment.Add(Change.Unit.Id, Change.Equipment);
+    }
     return true;
 }
