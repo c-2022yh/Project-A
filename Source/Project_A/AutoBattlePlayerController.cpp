@@ -220,7 +220,29 @@ bool AAutoBattlePlayerController::GetBoardClickHit(FHitResult& Hit)
     Hit = FHitResult();
     const ABoardManager* Board = GetBoardManager();
     if (!IsValid(Board) || !Board->CanProcessWorldInput() || IsPointerOverHUD()) return false;
-    return GetHitResultUnderCursor(ECC_Visibility, true, Hit);
+    FVector RayOrigin;
+    FVector RayDirection;
+    if (!DeprojectMousePositionToWorld(RayOrigin, RayDirection)) return false;
+
+    FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(UnitSelection), true);
+    if (const AAutoBattleGameMode* Mode = Cast<AAutoBattleGameMode>(UGameplayStatics::GetGameMode(this)))
+        for (ABattleUnitBase* Unit : Mode->BattleUnits)
+            if (IsValid(Unit)) QueryParams.AddIgnoredActor(Unit);
+
+    if (!GetWorld() || !GetWorld()->LineTraceSingleByChannel(
+        Hit, RayOrigin, RayOrigin + RayDirection * 100000.0f, ECC_Visibility, QueryParams)) return false;
+
+    ABattleUnitBase* Unit = nullptr;
+    if (const ABoardTile* Tile = Cast<ABoardTile>(Hit.GetActor()))
+        Unit = Cast<ABattleUnitBase>(Tile->OccupiedUnit);
+    else if (const ABenchTile* Slot = Cast<ABenchTile>(Hit.GetActor()))
+        Unit = Cast<ABattleUnitBase>(Slot->OccupiedUnit);
+    if (IsValid(Unit))
+    {
+        Hit.HitObjectHandle = FActorInstanceHandle(Unit);
+        Hit.Component = Unit->SelectionCollision;
+    }
+    return true;
 }
 
 // [UI 연결 경계] Canvas HitBox만 확인한다. UMG 팝업을 포함한 전역 차단은 BoardManager의 사유별 잠금 호출이 필요하다.
