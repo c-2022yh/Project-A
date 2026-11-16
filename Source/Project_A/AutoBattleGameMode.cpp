@@ -3,7 +3,6 @@
 #include "AutoBattleHUD.h"
 #include "BoardManager.h"
 #include "BoardTile.h"
-#include "Components/CapsuleComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Kismet/GameplayStatics.h"
 #include "TimerManager.h"
@@ -126,8 +125,6 @@ bool AAutoBattleGameMode::MoveUnitToWaitingArea(ABattleUnitBase* Unit, int32 Wai
         StatusMessage = TEXT("Setup: a player tile mesh is required to calculate waiting positions.");
         return false;
     }
-    if (IsValid(Unit->CurrentTile)) Unit->CurrentTile->ClearTile();
-    Unit->bIsDeployed = false;
     Unit->StopCombat();
     const FVector NearSurface = PlayerTiles[0]->GetSurfaceLocation();
     const FBoxSphereBounds NearBounds = PlayerTiles[0]->TileMesh->CalcBounds(PlayerTiles[0]->TileMesh->GetComponentTransform());
@@ -136,9 +133,8 @@ bool AAutoBattleGameMode::MoveUnitToWaitingArea(ABattleUnitBase* Unit, int32 Wai
         NearBounds.Origin.Y - NearBounds.BoxExtent.Y + 120.0f, NearSurface.Z);
     const FVector Position = Center + WaitingAreaOffset
         + FVector((WaitingIndex - (WaitingCount - 1) * 0.5f) * Spacing, 0,
-            Unit->GetCapsuleComponent()->GetScaledCapsuleHalfHeight() + 1.0f);
-    Unit->SetActorLocation(Position);
-    return true;
+            1.0f);
+    return Unit->SetWaitingPlacement(Position);
 }
 
 bool AAutoBattleGameMode::CompleteEncounterSetup()
