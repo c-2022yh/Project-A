@@ -11,6 +11,7 @@ class UTexture2D;
 class UAnimInstance;
 class UAnimSequence;
 class UAnimMontage;
+class UUnitSkillBase;
 
 UENUM(BlueprintType)
 enum class EBattleTeam : uint8 { Player, Enemy };
@@ -307,7 +308,10 @@ struct PROJECT_A_API FUnitDefinition : public FTableRowBase
     UPROPERTY(EditAnywhere, BlueprintReadOnly) TArray<float> StarHealthMultipliers = {1.f, 1.8f};
     UPROPERTY(EditAnywhere, BlueprintReadOnly) TArray<float> StarAttackMultipliers = {1.f, 1.8f};
     UPROPERTY(EditAnywhere, BlueprintReadOnly) bool bIsBoss = false;
-    UPROPERTY(EditAnywhere, BlueprintReadOnly) TArray<FUnitSkillDefinition> Skills;
+    // 새 행은 스킬 BP 클래스만 장착한다. 설정과 실행 상태는 스킬 객체가 소유한다.
+    UPROPERTY(EditAnywhere, BlueprintReadOnly) TArray<TSubclassOf<UUnitSkillBase>> SkillClasses;
+    // 이전 에셋/검사 호환용. SkillClasses가 있으면 이 목록은 실행하지 않는다.
+    UPROPERTY(BlueprintReadOnly, Category="Legacy") TArray<FUnitSkillDefinition> Skills;
     UPROPERTY(EditAnywhere, BlueprintReadOnly) FUnitBasicAttackDefinition BasicAttack;
     UPROPERTY(EditAnywhere, BlueprintReadOnly) FUnitVisualDefinition Visuals;
     UPROPERTY(EditAnywhere, BlueprintReadOnly) FUnitAnimationDefinition Animations;

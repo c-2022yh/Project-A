@@ -15,6 +15,7 @@ class ABattleUnitBase;
 class UMaterialInstanceDynamic;
 class UWidgetComponent;
 class UUnitStatusWidget;
+class UUnitSkillBase;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FBattleUnitEvent, ABattleUnitBase*, Unit);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FBattleUnitActionEvent, ABattleUnitBase*, Unit, int32, ActionId);
@@ -22,7 +23,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FBattleUnitDamageEvent, ABattleUn
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FBattleUnitHealEvent, ABattleUnitBase*, Unit, ABattleUnitBase*, Healer, float, Amount);
 
 /* 에디터 연결 순서
- * 1. DT_Units(UnitDefinition)에 외형/기본 능력치/Skills를 입력하고 InitializeUnit으로 생성한다.
+ * 1. DT_Units(UnitDefinition)에 외형/기본 능력치/SkillClasses를 입력하고 InitializeUnit으로 생성한다.
  * 2. 전투 관리자는 SetCombatRoster로 양 팀 명단을 전달한 뒤 StartCombat을 호출한다.
  * 3. 공격 Notify는 시작 이벤트에서 받은 ActionId로 CommitAttackHit/FinishAction을 호출한다.
  *    오래된 Notify를 현재 ID로 바꿔 호출하지 않는다. 몽타주가 없으면 타이머 방식을 선택한다.
@@ -140,6 +141,8 @@ public:
     UFUNCTION(BlueprintCallable, Category="Unit|Effects") bool AddShield(FName EffectId, float Amount, float Duration);
     UFUNCTION(BlueprintCallable, Category="Unit|Effects") bool AddModifier(FName EffectId, const FUnitStatModifier& Modifier, float Duration);
     UFUNCTION(BlueprintCallable, Category="Unit|Effects") bool RemoveEffect(FName EffectId);
+    UFUNCTION(BlueprintCallable, Category="Unit|Effects") bool EmpowerNextAttack(FName EffectId, float Multiplier, float FlatDamage, float Duration);
+    UFUNCTION(BlueprintPure, Category="Unit|Skills") TArray<UUnitSkillBase*> GetEquippedSkills() const;
     UFUNCTION(BlueprintPure, Category="Unit|Visual") float GetSelectionRadius() const;
     UFUNCTION(BlueprintPure, Category="Unit|Visual") float GetHealthBarHeight() const;
 
@@ -151,7 +154,7 @@ public:
     UFUNCTION(BlueprintImplementableEvent, Category="Unit|Visual") void ProjectileUpdated(const FUnitProjectileView& Projectile);
     UFUNCTION(BlueprintImplementableEvent, Category="Unit|Visual") void ProjectileRemoved(int32 ProjectileId, bool bHit);
 private:
-    struct FSkillRuntime { int32 Count = 0; float Cooldown = 0.f; };
+    friend class UUnitSkillBase;
     struct FPendingProjectile
     {
         int32 Id = 0;
@@ -165,6 +168,7 @@ private:
         FUnitProjectileVisualDefinition Visual;
         FUnitDamageRequest Damage;
         FUnitSkillDefinition Skill;
+        TWeakObjectPtr<UUnitSkillBase> SkillInstance;
         TArray<float> EffectValues;
     };
     struct FAttackEnhancement { FName Id; float Multiplier = 1.f; float Flat = 0.f; float Remaining = 0.f; };
@@ -180,7 +184,9 @@ private:
     float DeathVisualElapsed = 0.f;
     float DeathAnimationSeconds = 0.f;
     bool bDeathVisualActive = false;
-    TArray<FSkillRuntime> SkillRuntime;
+    // UPROPERTY가 스킬 객체를 보존한다. 발사된 탄은 사망 후에도 이 객체를 사용한다.
+    UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Transient, Category="Unit|Skills", meta=(AllowPrivateAccess="true"))
+    TArray<TObjectPtr<UUnitSkillBase>> SkillInstances;
     TArray<FPendingProjectile> Projectiles;
     TArray<FAttackEnhancement> AttackEnhancements;
     TSet<FGuid> AppliedDamage;
@@ -235,9 +241,9 @@ private:
     ABattleUnitBase* SelectSkillTarget(const FUnitSkillDefinition& Skill) const;
     FUnitDamageRequest MakeDamage(float Raw, EUnitDamageType Type, EUnitDamageSource Source, FName SkillId, int32 ActionId, bool bRollCritical) const;
     void ReportBasicHit(ABattleUnitBase* Target, const FUnitDamageRequest& Request, const FUnitDamageResult& Result);
-    void DispatchTrigger(EUnitTrigger Trigger, const FUnitDamageRequest& Context);
+    void DispatchTrigger(EUnitTrigger Trigger, const FUnitDamageRequest& Context, const FUnitDamageResult& Result = FUnitDamageResult());
     void ExecuteSkill(const FUnitSkillDefinition& Skill, ABattleUnitBase* Target, int32 ActionId);
-    void ApplySkillEffects(const FUnitSkillDefinition& Skill, ABattleUnitBase* Target, const TArray<float>& Values, const FUnitDamageRequest& Context);
+    void ExecuteSkillPayload(UUnitSkillBase* Instance, ABattleUnitBase* Target, int32 ActionId);
     TArray<float> CalculateEffectValues(const FUnitSkillDefinition& Skill) const;
     void LaunchProjectile(FPendingProjectile Projectile);
 };

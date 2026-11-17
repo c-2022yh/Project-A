@@ -17,6 +17,11 @@
 결과는 `Saved/UnitDeathFadeMaterialSetup.json`에 기록한다.
 스크립트/NullRHI 검사는 실제 화면의 디더 품질을 보증하지 않는다.
 
+## 클래스 기반 스킬 이전
+
+`MigrateUnitSkills.py`는 DT_Units의 기사/마법사/궁수/도적 스킬을 각각 스킬 BP로 이전하는 도구다.
+현재 에셋에는 이미 적용했다. 구조와 설정 위치는 [스킬 안내](../../Source/Project_A/Skills/README.md)를 참고한다.
+
 ## 런타임 흐름
 
 - BattleUnitBase가 몸체/MainHand/OffHand의 모든 머티리얼 슬롯을 확인한다.
