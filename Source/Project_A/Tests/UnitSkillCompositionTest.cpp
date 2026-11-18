@@ -46,8 +46,6 @@ bool FUnitSkillCompositionTest::RunTest(const FString& Parameters)
     using namespace UnitSkillTests;
     FFixture F; FUnitDefinition Data = FFixture::Data();
     Data.SkillClasses = {UKnightShieldSkill::StaticClass(), UHitGrowthPassiveSkill::StaticClass()};
-    // 이전 효과가 함께 들어 있어도 새 클래스가 있으면 실행하거나 검증하지 않는다.
-    Data.Skills.Add(FUnitSkillDefinition());
     ABattleUnitBase* A = F.Spawn(TEXT("A"), Data, EBattleTeam::Player, 0);
     ABattleUnitBase* B = F.Spawn(TEXT("B"), Data, EBattleTeam::Player, 1);
     ABattleUnitBase* Enemy = F.Spawn(TEXT("Enemy"), FFixture::Data(), EBattleTeam::Enemy, 2);
@@ -119,18 +117,17 @@ bool FUnitSkillValidationTest::RunTest(const FString& Parameters)
     return true;
 }
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FUnitSkillBehaviorParityTest, "ProjectA.Unit.Skills.MigratedBehaviorParity",
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FUnitSkillBehaviorParityTest, "ProjectA.Unit.Skills.BehaviorBaseline",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 bool FUnitSkillBehaviorParityTest::RunTest(const FString& Parameters)
 {
     using namespace UnitSkillTests;
     UDataTable* Table = LoadObject<UDataTable>(nullptr, TEXT("/Game/Data/Units/DT_Units.DT_Units"));
     if (!TestNotNull(TEXT("DT"), Table)) return false;
-    const auto Run = [this](TSubclassOf<UUnitSkillBase> Class, int32 Stars, bool bLegacy)
+    const auto Run = [this](TSubclassOf<UUnitSkillBase> Class, int32 Stars)
     {
         FFixture F; FUnitDefinition Data = FFixture::Data();
-        if (bLegacy) Data.Skills.Add(Class->GetDefaultObject<UUnitSkillBase>()->Settings);
-        else Data.SkillClasses.Add(Class);
+        Data.SkillClasses.Add(Class);
         ABattleUnitBase* A = F.Spawn(TEXT("Caster"), Data, EBattleTeam::Player, 0);
         ABattleUnitBase* B = F.Spawn(TEXT("Target"), FFixture::Data(), EBattleTeam::Enemy, 1);
         ABattleUnitBase* C = F.Spawn(TEXT("AreaTarget"), FFixture::Data(), EBattleTeam::Enemy, 2);
@@ -154,11 +151,17 @@ bool FUnitSkillBehaviorParityTest::RunTest(const FString& Parameters)
         if (!Row || Row->SkillClasses.Num() != 1) { AddError(TEXT("Migrated skill class missing")); continue; }
         for (int32 Stars : {1, 2})
         {
-            const TArray<float> Legacy = Run(Row->SkillClasses[0], Stars, true);
-            const TArray<float> Migrated = Run(Row->SkillClasses[0], Stars, false);
-            if (!TestEqual(TEXT("Same observed values"), Migrated.Num(), Legacy.Num())) continue;
+            // DT 정리 전 확인한 결과. 검사 유닛은 AD=10/18, 기본 공속=1, 적 HP=1000이다.
+            // 보호막/공속/주 대상 HP/범위 대상 HP/남은 마나 순서로 비교한다.
+            TArray<float> Expected;
+            if (Name == TEXT("Knight")) Expected = {Stars == 1 ? 30.f : 54.f, 1.f, 1000.f, 1000.f, 0.f};
+            else if (Name == TEXT("Mage")) Expected = {0.f, 1.f, Stars == 1 ? 900.f : 676.f, Stars == 1 ? 900.f : 676.f, 0.f};
+            else if (Name == TEXT("Archer")) Expected = {0.f, Stars == 1 ? 1.5f : 1.8f, 1000.f, 1000.f, 0.f};
+            else Expected = {0.f, 1.f, Stars == 1 ? 980.f : 964.f, 1000.f, 10.f};
+            const TArray<float> Migrated = Run(Row->SkillClasses[0], Stars);
+            if (!TestEqual(TEXT("Same observed values"), Migrated.Num(), Expected.Num())) continue;
             for (int32 Index = 0; Index < Migrated.Num(); ++Index)
-                TestTrue(*FString::Printf(TEXT("%s %d-star outcome[%d] preserved"), *Name.ToString(), Stars, Index), FMath::IsNearlyEqual(Migrated[Index], Legacy[Index]));
+                TestTrue(*FString::Printf(TEXT("%s %d-star outcome[%d] preserved"), *Name.ToString(), Stars, Index), FMath::IsNearlyEqual(Migrated[Index], Expected[Index]));
         }
     }
     return true;
@@ -198,7 +201,8 @@ bool FUnitSkillAssetTest::RunTest(const FString& Parameters)
     {
         const FUnitDefinition* Row = Table->FindRow<FUnitDefinition>(Name, TEXT("SkillAssetTest"));
         if (!TestNotNull(*Name.ToString(), Row)) continue;
-        TestTrue(TEXT("DT only stores skill class, no old effects"), Row->SkillClasses.Num() == 1 && Row->Skills.IsEmpty());
+        TestTrue(TEXT("DT stores one skill class"), Row->SkillClasses.Num() == 1);
+        TestNull(TEXT("Legacy skill field removed from schema"), FUnitDefinition::StaticStruct()->FindPropertyByName(TEXT("Skills")));
         ABattleUnitBase* Unit = F.World->SpawnActor<ABattleUnitBase>();
         FDataTableRowHandle Handle; Handle.DataTable = Table; Handle.RowName = Name; FString Error;
         TestTrue(*FString::Printf(TEXT("%s initializes: %s"), *Name.ToString(), *Error), Unit->InitializeUnit(Handle, EBattleTeam::Player, 1, Error));

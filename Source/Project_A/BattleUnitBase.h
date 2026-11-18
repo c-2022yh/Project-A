@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
 #include "UnitTypes.h"
+#include "Skills/UnitSkillProgress.h"
 #include "BattleUnitBase.generated.h"
 
 class ABoardTile;
@@ -129,6 +130,7 @@ public:
     UFUNCTION(BlueprintCallable, Category="Unit|Combat") void StartCombat();
     UFUNCTION(BlueprintCallable, Category="Unit|Combat") void StopCombat();
     UFUNCTION(BlueprintCallable, Category="Unit|Combat") bool ResetForRound();
+    UFUNCTION(BlueprintCallable, Category="Unit|Skills") bool PrepareSkillsForRound();
     UFUNCTION(BlueprintCallable, Category="Unit|Combat") void SetOvertimeBonuses(float AttackSpeedBonus, float DamageBonus);
     UFUNCTION(BlueprintCallable, Category="Unit|Combat") bool TryBasicAttack();
     UFUNCTION(BlueprintCallable, Category="Unit|Combat") bool CommitAttackHit(int32 ActionId);
@@ -141,8 +143,19 @@ public:
     UFUNCTION(BlueprintCallable, Category="Unit|Effects") bool AddShield(FName EffectId, float Amount, float Duration);
     UFUNCTION(BlueprintCallable, Category="Unit|Effects") bool AddModifier(FName EffectId, const FUnitStatModifier& Modifier, float Duration);
     UFUNCTION(BlueprintCallable, Category="Unit|Effects") bool RemoveEffect(FName EffectId);
+    UFUNCTION(BlueprintPure, Category="Unit|Effects") float GetPeriodicDamageRemaining(FName EffectId) const;
+    bool ApplyPeriodicMagicDamage(FName EffectId, ABattleUnitBase* Source, int32 ActionId, float DamagePerTick,
+        float SecondsPerTick, int32 TickCount, float MagicResistanceReduction);
+    const TArray<TObjectPtr<ABattleUnitBase>>& GetCombatRoster() const { return CombatRoster; }
+    bool IsEnemyTarget(const ABattleUnitBase* Target) const;
     UFUNCTION(BlueprintCallable, Category="Unit|Effects") bool EmpowerNextAttack(FName EffectId, float Multiplier, float FlatDamage, float Duration);
+    // 스킬 출처가 있는 강화는 실제 명중까지 유지한다. 회복 등 결과 처리는 출처 스킬에 알린다.
+    UFUNCTION(BlueprintCallable, Category="Unit|Effects") bool ArmNextBasicAttack(UUnitSkillBase* SourceSkill, float TotalAttackDamageRatio);
+    UFUNCTION(BlueprintPure, Category="Unit|Effects") bool HasArmedBasicAttack(const UUnitSkillBase* SourceSkill) const;
     UFUNCTION(BlueprintPure, Category="Unit|Skills") TArray<UUnitSkillBase*> GetEquippedSkills() const;
+    UFUNCTION(BlueprintCallable, Category="Unit|Skills") bool CaptureSkillProgress(TArray<FUnitSkillProgress>& States) const;
+    UFUNCTION(BlueprintPure, Category="Unit|Skills") bool CanRestoreSkillProgress(const TArray<FUnitSkillProgress>& States) const;
+    UFUNCTION(BlueprintCallable, Category="Unit|Skills") bool RestoreSkillProgress(const TArray<FUnitSkillProgress>& States);
     UFUNCTION(BlueprintPure, Category="Unit|Visual") float GetSelectionRadius() const;
     UFUNCTION(BlueprintPure, Category="Unit|Visual") float GetHealthBarHeight() const;
 
@@ -155,6 +168,21 @@ public:
     UFUNCTION(BlueprintImplementableEvent, Category="Unit|Visual") void ProjectileRemoved(int32 ProjectileId, bool bHit);
 private:
     friend class UUnitSkillBase;
+    struct FPeriodicDamage
+    {
+        TWeakObjectPtr<ABattleUnitBase> Source;
+        int32 SourceGeneration = 0;
+        int32 ActionId = 0;
+        uint32 Revision = 0;
+        float DamagePerTick = 0.f;
+        float OffenseMultiplier = 1.f;
+        float MagicResistanceReduction = 0.f;
+        double Interval = 0.0;
+        double TimeUntilTick = 0.0;
+        double RemainingSeconds = 0.0;
+    };
+    TMap<FName, FPeriodicDamage> PeriodicDamage;
+    uint32 PeriodicDamageRevision = 0;
     struct FPendingProjectile
     {
         int32 Id = 0;
@@ -171,7 +199,17 @@ private:
         TWeakObjectPtr<UUnitSkillBase> SkillInstance;
         TArray<float> EffectValues;
     };
-    struct FAttackEnhancement { FName Id; float Multiplier = 1.f; float Flat = 0.f; float Remaining = 0.f; };
+    struct FAttackEnhancement
+    {
+        FName Id;
+        float Multiplier = 1.f;
+        float Flat = 0.f;
+        float Remaining = 0.f;
+        bool bConsumeOnHit = false;
+        float TotalAttackDamageRatio = 0.f;
+        int32 PendingActionId = 0;
+        TWeakObjectPtr<UUnitSkillBase> SourceSkill;
+    };
     FUnitProjectileView MakeProjectileView(const FPendingProjectile& Projectile) const;
 #if WITH_DEV_AUTOMATION_TESTS
     friend class FUnitProjectileViewTest;
@@ -190,12 +228,16 @@ private:
     TArray<FPendingProjectile> Projectiles;
     TArray<FAttackEnhancement> AttackEnhancements;
     TSet<FGuid> AppliedDamage;
+    // 피해받은 유닛이 전투별 기여자를 관리한다. 성장 수치/진화 조건은 스킬에만 둔다.
+    // 값은 기여자의 전투 세대이며 라운드를 떠났다가 재참가한 같은 Actor를 구분한다.
+    TMap<TWeakObjectPtr<ABattleUnitBase>, int32> DamageContributors;
     TSet<int32> UnreachableTargets;
     TMap<FName, float> GrowthThisCombat;
     TWeakObjectPtr<ABattleUnitBase> ActionTarget;
     EUnitPlacement PreparationPlacement = EUnitPlacement::Unplaced;
     FUnitDamageRequest TriggerContext;
     FUnitDamageRequest ActiveAttackDamage;
+    float ActiveAttackDamageStat = 0.f;
     int32 ActionSequence = 0;
     int32 CombatGeneration = 0;
     int32 ActiveSkillIndex = INDEX_NONE;
@@ -209,6 +251,7 @@ private:
     float DamageIncrease = 0.f;
     float DamageRemainingRatio = 1.f;
     float AttackSlow = 0.f;
+    float AttackSpeedBonusBeforeSkills = 0.f;
     float OvertimeAttackSpeed = 0.f;
     float OvertimeDamageMultiplier = 1.f;
     bool bActionCommitted = false;
@@ -221,29 +264,33 @@ private:
     FVector MoveStart = FVector::ZeroVector;
 
     void ClearVisuals();
+    bool RefreshAttackSpeed();
     void ApplyWeapon(UStaticMeshComponent* Component, const FUnitWeaponVisual& Visual);
     void ChangeAction(EUnitActionState State);
     void CancelAction(bool bRefundMana = false);
     void ReleaseMove(bool bCompleted);
     void Die();
+    void NotifyKillParticipants();
     void CreateDeathFadeMaterials();
     void SetDeathOpacity(float Opacity);
     void ResetDeathVisual();
     void TickDeathVisual(float Delta);
     void RefreshShieldTotal();
     void TickEffects(float Delta);
+    void TickPeriodicDamage(float Delta);
     void TickProjectiles(float Delta);
     void TickAction(float Delta);
     void Think(float Delta);
     void FindTarget();
-    bool IsEnemyTarget(const ABattleUnitBase* Target) const;
     bool IsInRange(const ABattleUnitBase* Target, int32 Range) const;
     ABattleUnitBase* SelectSkillTarget(const FUnitSkillDefinition& Skill) const;
     FUnitDamageRequest MakeDamage(float Raw, EUnitDamageType Type, EUnitDamageSource Source, FName SkillId, int32 ActionId, bool bRollCritical) const;
     void ReportBasicHit(ABattleUnitBase* Target, const FUnitDamageRequest& Request, const FUnitDamageResult& Result);
+    void ResolveArmedBasicAttack(const FUnitDamageRequest& Request, const FUnitDamageResult& Result);
+    void ReleaseArmedBasicAttack(int32 ActionId);
     void DispatchTrigger(EUnitTrigger Trigger, const FUnitDamageRequest& Context, const FUnitDamageResult& Result = FUnitDamageResult());
     void ExecuteSkill(const FUnitSkillDefinition& Skill, ABattleUnitBase* Target, int32 ActionId);
     void ExecuteSkillPayload(UUnitSkillBase* Instance, ABattleUnitBase* Target, int32 ActionId);
     TArray<float> CalculateEffectValues(const FUnitSkillDefinition& Skill) const;
-    void LaunchProjectile(FPendingProjectile Projectile);
+    bool LaunchProjectile(FPendingProjectile Projectile);
 };

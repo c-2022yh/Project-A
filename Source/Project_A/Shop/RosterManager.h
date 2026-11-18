@@ -38,6 +38,10 @@ public:
     UFUNCTION(BlueprintPure, Category="Roster")
     bool GetUnit(FGuid Id, FRosterUnit& Unit) const;
 
+    // 액터를 파괴하기 전에 현재 스킬 기록을 로스터에 보관한다.
+    UFUNCTION(BlueprintCallable, Category="Roster")
+    bool CacheUnitSkillProgress(FGuid Id);
+
     UFUNCTION(BlueprintPure, Category="Roster")
     FUnitPosition GetPosition(FGuid Id) const;
 
@@ -56,6 +60,7 @@ private:
     UPROPERTY(VisibleAnywhere, Category="Roster")
     TObjectPtr<UBenchManager> Bench;
 
+    UPROPERTY(Transient)
     TArray<FRosterUnit> Units;
 
     static bool IsPositionValid(const FUnitPosition& Position);

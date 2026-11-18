@@ -7,11 +7,17 @@
 class USkeletalMesh;
 class UStaticMesh;
 class UMaterialInterface;
-class UTexture2D;
 class UAnimInstance;
 class UAnimSequence;
 class UAnimMontage;
 class UUnitSkillBase;
+
+// 모든 기물의 공통 승급 규칙. 개별 DT 행에 같은 배율을 반복 저장하지 않는다.
+namespace UnitProgression
+{
+    inline constexpr float TwoStarStatMultiplier = 1.8f;
+    inline float StatMultiplier(int32 Stars) { return Stars == 2 ? TwoStarStatMultiplier : 1.f; }
+}
 
 UENUM(BlueprintType)
 enum class EBattleTeam : uint8 { Player, Enemy };
@@ -79,7 +85,6 @@ struct PROJECT_A_API FUnitAnimationDefinition
     UPROPERTY(EditAnywhere, BlueprintReadOnly) TObjectPtr<UAnimSequence> IdleAnimation = nullptr;
     UPROPERTY(EditAnywhere, BlueprintReadOnly) TObjectPtr<UAnimSequence> MoveAnimation = nullptr;
     UPROPERTY(EditAnywhere, BlueprintReadOnly) TObjectPtr<UAnimMontage> AttackMontage = nullptr;
-    UPROPERTY(EditAnywhere, BlueprintReadOnly) TObjectPtr<UAnimMontage> HitMontage = nullptr;
     UPROPERTY(EditAnywhere, BlueprintReadOnly) TObjectPtr<UAnimMontage> DeathMontage = nullptr;
     UPROPERTY(EditAnywhere, BlueprintReadOnly) TObjectPtr<UAnimMontage> SpawnMontage = nullptr;
 };
@@ -220,6 +225,8 @@ struct PROJECT_A_API FUnitCombatPolicy
     UPROPERTY(EditAnywhere, BlueprintReadWrite) float BlockedTargetGraceSeconds = 1.f;
     UPROPERTY(EditAnywhere, BlueprintReadWrite) float NotifyTimeoutGraceSeconds = 0.15f;
     UPROPERTY(EditAnywhere, BlueprintReadWrite) float MaxAttackSpeed = 5.f;
+    // 유닛 DT의 보스 플래그와 분리한다. 향후 적 생성 경로에서 0.5면 기절 시간 절반.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, meta=(ClampMin="0", ClampMax="1")) float StunDurationMultiplier = 1.f;
     UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 MaxTriggerDepth = 8;
     UPROPERTY(EditAnywhere, BlueprintReadWrite) EUnitNegativeResistancePolicy NegativeResistance = EUnitNegativeResistancePolicy::ClampToZero;
     UPROPERTY(EditAnywhere, BlueprintReadWrite) EUnitShieldOrder ShieldOrder = EUnitShieldOrder::EarliestExpiry;
@@ -298,21 +305,11 @@ struct PROJECT_A_API FUnitDefinition : public FTableRowBase
 {
     GENERATED_BODY()
     // 데이터 테이블의 RowName이 유닛 ID다. 별도 ID를 중복 저장하지 않는다.
-    UPROPERTY(EditAnywhere, BlueprintReadOnly) FText DisplayName;
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, meta=(MultiLine=true)) FText Description;
-    UPROPERTY(EditAnywhere, BlueprintReadOnly) TObjectPtr<UTexture2D> Icon = nullptr;
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, meta=(ClampMin="1", ClampMax="5")) int32 Cost = 1;
-    UPROPERTY(EditAnywhere, BlueprintReadOnly) TArray<FName> RoleTags;
-    UPROPERTY(EditAnywhere, BlueprintReadOnly) FUnitStats BaseStats;
-    // 1/2성 표준. 기존 테스트 행을 읽기 위한 배율 필드이며 새 행은 1.8을 사용한다.
-    UPROPERTY(EditAnywhere, BlueprintReadOnly) TArray<float> StarHealthMultipliers = {1.f, 1.8f};
-    UPROPERTY(EditAnywhere, BlueprintReadOnly) TArray<float> StarAttackMultipliers = {1.f, 1.8f};
-    UPROPERTY(EditAnywhere, BlueprintReadOnly) bool bIsBoss = false;
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, meta=(ClampMin="1", ClampMax="5", ToolTip="1~5코스트 분류. 초기화 시 범위를 검사하며 현재 상점 구매 가격은 별도 Offer.Cost를 사용한다.")) int32 Cost = 1;
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, meta=(ToolTip="1성 원본 능력치. 성급 배율과 영구 성장, 장비, 임시 효과를 적용해 최종 능력치를 계산한다.")) FUnitStats BaseStats;
     // 새 행은 스킬 BP 클래스만 장착한다. 설정과 실행 상태는 스킬 객체가 소유한다.
-    UPROPERTY(EditAnywhere, BlueprintReadOnly) TArray<TSubclassOf<UUnitSkillBase>> SkillClasses;
-    // 이전 에셋/검사 호환용. SkillClasses가 있으면 이 목록은 실행하지 않는다.
-    UPROPERTY(BlueprintReadOnly, Category="Legacy") TArray<FUnitSkillDefinition> Skills;
-    UPROPERTY(EditAnywhere, BlueprintReadOnly) FUnitBasicAttackDefinition BasicAttack;
-    UPROPERTY(EditAnywhere, BlueprintReadOnly) FUnitVisualDefinition Visuals;
-    UPROPERTY(EditAnywhere, BlueprintReadOnly) FUnitAnimationDefinition Animations;
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, meta=(ToolTip="장착할 스킬 BP/C++ 클래스 목록. 액티브 최대 1개, 패시브 여러 개. 스킬 수치는 각 스킬 BP에서 설정한다.")) TArray<TSubclassOf<UUnitSkillBase>> SkillClasses;
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, meta=(ToolTip="평타의 근접/투사체 판정, 피해식, 타격 시점, 투사체 외형. 액티브/패시브 설정과 별개다.")) FUnitBasicAttackDefinition BasicAttack;
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, meta=(ToolTip="몸체 메시, 머티리얼, 전체 외형 보정과 양손 무기/소켓 설정.")) FUnitVisualDefinition Visuals;
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, meta=(ToolTip="공통 AnimBP와 대기/이동/평타/사망/소환 모션. 스킬 몽타주는 스킬 BP에서 설정한다.")) FUnitAnimationDefinition Animations;
 };

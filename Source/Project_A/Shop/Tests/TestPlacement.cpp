@@ -1,5 +1,7 @@
 ﻿#include "TestPlacement.h"
 
+#include "../../BattleUnitBase.h"
+
 namespace
 {
 bool SameSlot(const FUnitPosition& A, const FUnitPosition& B)
@@ -12,6 +14,12 @@ FUnitPosition UTestPlacement::GetUnitPosition_Implementation(FGuid Id) const
 {
     const FUnitPosition* Position = Positions.Find(Id);
     return Position ? *Position : FUnitPosition();
+}
+
+ABattleUnitBase* UTestPlacement::GetBattleUnit_Implementation(FGuid Id) const
+{
+    const auto* Actor = BattleUnits.Find(Id);
+    return Actor ? Actor->Get() : nullptr;
 }
 
 FGuid UTestPlacement::GetOccupant_Implementation(FUnitPosition Position) const
@@ -57,6 +65,22 @@ bool UTestPlacement::ApplyUnitChanges_Implementation(const TArray<FRosterUnitCha
     for (const auto& Entry : Next)
         if (Entry.Value.Location == EUnitLocation::Board) ++Deployed;
     if (Phase != EShopPhase::Inactive && Deployed > Limit) return false;
+    for (const FRosterUnitChange& Change : Changes)
+    {
+        if (Change.Edit == ERosterUnitEdit::Remove) continue;
+        if (ABattleUnitBase* Actor = GetBattleUnit_Implementation(Change.Unit.Id))
+            if (!Actor->CanRestoreSkillProgress(Change.Unit.SkillProgress) || Change.Unit.Stars < 1 || Change.Unit.Stars > 2) return false;
+    }
+    // 전체 검증이 끝난 뒤에만 실행 객체와 위치를 함께 갱신한다.
+    for (const FRosterUnitChange& Change : Changes)
+    {
+        if (Change.Edit == ERosterUnitEdit::Remove) { BattleUnits.Remove(Change.Unit.Id); continue; }
+        if (ABattleUnitBase* Actor = GetBattleUnit_Implementation(Change.Unit.Id))
+        {
+            Actor->SetStarLevel(Change.Unit.Stars);
+            Actor->RestoreSkillProgress(Change.Unit.SkillProgress);
+        }
+    }
     Positions = MoveTemp(Next);
     return true;
 }

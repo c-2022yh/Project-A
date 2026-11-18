@@ -1,5 +1,6 @@
 ﻿#include "RosterManager.h"
 #include "BenchManager.h"
+#include "../BattleUnitBase.h"
 
 bool ARosterManager::IsPositionValid(const FUnitPosition& Position)
 {
@@ -23,9 +24,33 @@ bool ARosterManager::GetUnit(FGuid Id, FRosterUnit& Unit) const
     if (const FRosterUnit* Found = FindUnit(Id))
     {
         Unit = *Found;
+        if (!UnitSkillProgress::Validate(Unit.SkillProgress)) return false;
+        if (IsValid(Placement.GetObject()))
+        {
+            ABattleUnitBase* Actor = IUnitPlacement::Execute_GetBattleUnit(Placement.GetObject(), Id);
+            if (Actor)
+            {
+                if (!IsValid(Actor) || Actor->GetWorld() != GetWorld() || Actor->UnitID != Unit.UnitId
+                    || Actor->TeamType != EBattleTeam::Player) return false;
+                TArray<FUnitSkillProgress> Live;
+                if (!Actor->CaptureSkillProgress(Live)
+                    || !UnitSkillProgress::Merge(Unit.SkillProgress, Live, Unit.SkillProgress)) return false;
+            }
+        }
         return true;
     }
     return false;
+}
+
+bool ARosterManager::CacheUnitSkillProgress(FGuid Id)
+{
+    if (!IsValid(Placement.GetObject()) || !IsValid(IUnitPlacement::Execute_GetBattleUnit(Placement.GetObject(), Id))) return false;
+    FRosterUnit Snapshot;
+    if (!GetUnit(Id, Snapshot)) return false;
+    FRosterUnit* Stored = Units.FindByPredicate([Id](const FRosterUnit& Unit) { return Unit.Id == Id; });
+    if (!Stored) return false;
+    Stored->SkillProgress = MoveTemp(Snapshot.SkillProgress);
+    return true;
 }
 
 FUnitPosition ARosterManager::GetPosition(FGuid Id) const

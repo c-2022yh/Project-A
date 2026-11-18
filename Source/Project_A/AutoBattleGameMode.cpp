@@ -200,6 +200,9 @@ void AAutoBattleGameMode::CancelEncounterSetup()
 void AAutoBattleGameMode::StartPreparationPhase()
 {
     if (!bEncounterReady || CurrentPhase != EGamePhase::Preparation) return;
+    const TArray<ABattleUnitBase*> Units = BattleUnits;
+    for (ABattleUnitBase* Unit : Units)
+        if (IsValid(Unit)) Unit->PrepareSkillsForRound();
     RestartPreparationCountdown();
     StatusMessage = TEXT("Select an ally, then click an empty player tile. Enter: start. Right click: cancel.");
     ChangePhase(EGamePhase::Preparation);

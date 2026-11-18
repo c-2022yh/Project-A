@@ -13,8 +13,10 @@ public:
     bool bReject = false;
     TFunction<void()> OnApply;
     int32 AvailableBoardTiles = 2;
+    TMap<FGuid, TWeakObjectPtr<ABattleUnitBase>> BattleUnits;
 
     virtual FUnitPosition GetUnitPosition_Implementation(FGuid Id) const override;
+    virtual ABattleUnitBase* GetBattleUnit_Implementation(FGuid Id) const override;
     virtual FGuid GetOccupant_Implementation(FUnitPosition Position) const override;
     virtual FUnitPosition FindRewardTile_Implementation(int32 DeploymentLimit) const override;
     virtual bool ApplyUnitChanges_Implementation(const TArray<FRosterUnitChange>& Changes, EShopPhase Phase, int32 Limit) override;

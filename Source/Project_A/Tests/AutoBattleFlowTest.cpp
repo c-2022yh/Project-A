@@ -32,7 +32,6 @@ bool FUnitDataInitializationTest::RunTest(const FString& Parameters)
     FUnitDefinition Knight;
     Knight.BaseStats.MaxHealth = 200.f;
     Knight.BaseStats.AttackDamage = 30.f;
-    Knight.StarHealthMultipliers = {1.f, 2.f, 3.f};
     Knight.Visuals.VisualTransform.SetScale3D(FVector(2.f));
     Table->AddRow(TEXT("Knight"), Knight);
     FUnitDefinition Mage;
@@ -47,9 +46,9 @@ bool FUnitDataInitializationTest::RunTest(const FString& Parameters)
     Handle.RowName = TEXT("Knight");
     FString Error;
     TestTrue(TEXT("Knight initialized"), Unit->InitializeUnit(Handle, EBattleTeam::Player, 2, Error));
-    TestEqual(TEXT("Star health"), Unit->FinalStats.MaxHealth, 400.f);
+    TestEqual(TEXT("Common two-star health multiplier"), Unit->FinalStats.MaxHealth, 360.f);
     Unit->RecalculateStats();
-    TestEqual(TEXT("Recalculation does not stack"), Unit->FinalStats.MaxHealth, 400.f);
+    TestEqual(TEXT("Recalculation does not stack"), Unit->FinalStats.MaxHealth, 360.f);
     TestEqual(TEXT("Source row remains unchanged"), Table->FindRow<FUnitDefinition>(TEXT("Knight"), TEXT("test"))->BaseStats.MaxHealth, 200.f);
     TestTrue(TEXT("Visual correction applied"), Unit->VisualRoot->GetRelativeScale3D().Equals(FVector(2.f)));
     TestTrue(TEXT("Actor scale unaffected"), Unit->GetActorScale3D().Equals(FVector::OneVector));

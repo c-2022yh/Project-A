@@ -52,7 +52,7 @@ bool AShopTransactionManager::EnterPreparation(int32 Round, int32 DeploymentLimi
     }
     for (FName UnitId : UnitTypes)
         for (int32 Merge = 0; Merge < Counts.FindChecked(UnitId) / 3; ++Merge)
-            PlanMerge(UnitId, nullptr, {}, Changes, ItemState);
+            if (!PlanMerge(UnitId, nullptr, {}, Changes, ItemState)) return false;
 
     if (!ApplyChanges(Changes, MoveTemp(ItemState), EShopPhase::Preparation, DeploymentLimit)) return false;
     Shop->CommitPreparation(Round, DeploymentLimit, MoveTemp(NextOffers));
@@ -203,7 +203,7 @@ ETransactionResult AShopTransactionManager::AddUnit(const FShopOffer& Offer, int
     TArray<FRosterUnitChange> Changes;
     AItemManager::FState ItemState = Items->Snapshot();
     if (Stars == 1 && Shop->GetPhase() == EShopPhase::Preparation)
-        PlanMerge(Unit.UnitId, &Unit, Destination, Changes, ItemState);
+        if (!PlanMerge(Unit.UnitId, &Unit, Destination, Changes, ItemState)) return ETransactionResult::ChangeRejected;
     if (Changes.IsEmpty())
     {
         if (Destination.Location == EUnitLocation::None) return ETransactionResult::NoSpace;
@@ -214,12 +214,22 @@ ETransactionResult AShopTransactionManager::AddUnit(const FShopOffer& Offer, int
         ? ETransactionResult::Success : ETransactionResult::ChangeRejected;
 }
 
-void AShopTransactionManager::PlanMerge(FName UnitId, const FRosterUnit* Incoming, FUnitPosition Destination,
+bool AShopTransactionManager::PlanMerge(FName UnitId, const FRosterUnit* Incoming, FUnitPosition Destination,
     TArray<FRosterUnitChange>& Changes, AItemManager::FState& ItemState) const
 {
     auto Materials = Roster->FindMergeMaterials(UnitId, Incoming ? 2 : 3, Changes);
     if (Incoming) Materials.Add(Incoming);
-    if (Materials.Num() != 3) return;
+    if (Materials.Num() != 3) return true;
+
+    // 남길 위치와 무관하게 재료 전부의 최신 실행 기록을 읽는다.
+    TArray<FUnitSkillProgress> Progress;
+    for (const FRosterUnit* Material : Materials)
+    {
+        FRosterUnit Snapshot;
+        if (Material == Incoming) Snapshot = *Incoming;
+        else if (!Roster->GetUnit(Material->Id, Snapshot)) return false;
+        if (!UnitSkillProgress::Merge(Progress, Snapshot.SkillProgress, Progress)) return false;
+    }
 
     const FRosterUnit* Kept = Materials[0];
     for (const FRosterUnit* Material : Materials)
@@ -234,6 +244,7 @@ void AShopTransactionManager::PlanMerge(FName UnitId, const FRosterUnit* Incomin
 
     FRosterUnit Upgraded = *Kept;
     Upgraded.Stars = 2;
+    Upgraded.SkillProgress = MoveTemp(Progress);
     TArray<FGuid> MaterialIds;
     for (const FRosterUnit* Material : Materials)
     {
@@ -243,6 +254,7 @@ void AShopTransactionManager::PlanMerge(FName UnitId, const FRosterUnit* Incomin
     }
     ItemState.InheritEquipment(MaterialIds, Kept->Id);
     Changes.Add(Roster->MakeChange(Kept == Incoming ? ERosterUnitEdit::Add : ERosterUnitEdit::Update, Upgraded, Destination));
+    return true;
 }
 
 ETransactionResult AShopTransactionManager::RequestMoveToBench(FGuid UnitId, int32 Slot)
@@ -257,9 +269,9 @@ ETransactionResult AShopTransactionManager::RequestMove(FGuid UnitId, FUnitPosit
     if (!Roster->IsPositionValid(Destination)) return ETransactionResult::InvalidSelection;
 
     TGuardValue<bool> Guard(Shop->bChanging, true);
-    const FRosterUnit* Unit = Roster->FindUnit(UnitId);
+    FRosterUnit Unit;
     const FUnitPosition Source = Roster->GetPosition(UnitId);
-    if (!Unit || !Roster->IsPositionValid(Source)) return ETransactionResult::InvalidSelection;
+    if (!Roster->GetUnit(UnitId, Unit) || !Roster->IsPositionValid(Source)) return ETransactionResult::InvalidSelection;
     if (Shop->GetPhase() == EShopPhase::Combat
         && (Source.Location != EUnitLocation::Bench || Destination.Location != EUnitLocation::Bench))
         return ETransactionResult::WrongPhase;
@@ -278,11 +290,11 @@ ETransactionResult AShopTransactionManager::RequestMove(FGuid UnitId, FUnitPosit
     const FGuid OccupantId = Roster->FindOccupant(Destination);
     if (OccupantId.IsValid())
     {
-        const FRosterUnit* Occupant = Roster->FindUnit(OccupantId);
-        if (!Occupant) return ETransactionResult::ChangeRejected;
-        AddMove(*Occupant, Source);
+        FRosterUnit Occupant;
+        if (!Roster->GetUnit(OccupantId, Occupant)) return ETransactionResult::ChangeRejected;
+        AddMove(Occupant, Source);
     }
-    AddMove(*Unit, Destination);
+    AddMove(Unit, Destination);
     if (!ApplyChanges(Changes, MoveTemp(ItemState), Shop->GetPhase(), Shop->GetDeploymentLimit()))
         return ETransactionResult::ChangeRejected;
 
@@ -306,15 +318,15 @@ ETransactionResult AShopTransactionManager::ChangeEquipment(FGuid UnitId, FName 
     if (!Shop->CanManageBoard()) return ETransactionResult::WrongPhase;
 
     TGuardValue<bool> Guard(Shop->bChanging, true);
-    const FRosterUnit* Unit = Roster->FindUnit(UnitId);
-    if (!Unit || Roster->GetPosition(UnitId).Location != EUnitLocation::Board)
+    FRosterUnit Unit;
+    if (!Roster->GetUnit(UnitId, Unit) || Roster->GetPosition(UnitId).Location != EUnitLocation::Board)
         return ETransactionResult::InvalidSelection;
 
     AItemManager::FState ItemState = Items->Snapshot();
     const auto Result = Items->PlanEquipmentChange(ItemState, UnitId, ItemId, UnequipSlot);
     if (Result != ETransactionResult::Success) return Result;
 
-    TArray<FRosterUnitChange> Changes = { Roster->MakeChange(ERosterUnitEdit::Update, *Unit) };
+    TArray<FRosterUnitChange> Changes = { Roster->MakeChange(ERosterUnitEdit::Update, Unit) };
     if (!ApplyChanges(Changes, MoveTemp(ItemState), Shop->GetPhase(), Shop->GetDeploymentLimit()))
         return ETransactionResult::ChangeRejected;
 

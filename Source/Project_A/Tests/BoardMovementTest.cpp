@@ -3,6 +3,7 @@
 #include "../BoardManager.h"
 #include "../BoardTile.h"
 #include "../BattleUnitBase.h"
+#include "../Skills/RaiderAmbushSkill.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "Engine/GameInstance.h"
@@ -37,11 +38,18 @@ namespace BoardMovementTests
             GEngine->DestroyWorldContext(World); World->DestroyWorld(false);
             GFrameCounter = SavedFrame;
         }
-        ABattleUnitBase* Spawn(EBattleTeam Team, ABoardTile* Tile, float Damage = 10.f)
+        ABattleUnitBase* Spawn(EBattleTeam Team, ABoardTile* Tile, float Damage = 10.f,
+            TSubclassOf<UUnitSkillBase> Skill = nullptr, float MaxHealth = 1000.f)
         {
-            FUnitDefinition Data; Data.BaseStats.MaxHealth = 1000.f; Data.BaseStats.AttackDamage = Damage;
+            FUnitDefinition Data; Data.BaseStats.MaxHealth = MaxHealth; Data.BaseStats.AttackDamage = Damage;
             Data.BaseStats.CriticalChance = 0.f; Data.BaseStats.AttackRange = 1; Data.BaseStats.MovementSpeed = 300.f;
             Data.BasicAttack.bUseAnimNotify = false; Data.BasicAttack.AnimationSecondsAtSpeedOne = 0.2f;
+            if (Skill)
+            {
+                Data.SkillClasses.Add(Skill);
+                Data.BaseStats.MaxMana = 80.f;
+                Data.BaseStats.CriticalChance = 1.f;
+            }
             const FName Name(*FString::Printf(TEXT("Unit%d"), ++Sequence)); Table->AddRow(Name, Data);
             FDataTableRowHandle Handle; Handle.DataTable = Table; Handle.RowName = Name;
             ABattleUnitBase* Unit = World->SpawnActor<ABattleUnitBase>();
@@ -55,6 +63,71 @@ namespace BoardMovementTests
             return nullptr;
         }
     };
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRaiderAmbushTest, "ProjectA.Unit.RaiderAmbush.CombatLanding",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FRaiderAmbushTest::RunTest(const FString& Parameters)
+{
+    using namespace BoardMovementTests;
+    FFixture F;
+    ABoardTile* Start = F.Board->GetTile(0, 0);
+    ABattleUnitBase* Raider = F.Spawn(EBattleTeam::Player, Start, 60.f, URaiderAmbushSkill::StaticClass());
+    ABattleUnitBase* Blocked = F.Spawn(EBattleTeam::Enemy, F.Board->GetTile(5, 4));
+    ABattleUnitBase* Chosen = F.Spawn(EBattleTeam::Enemy, F.Board->GetTile(4, 1));
+    ABattleUnitBase* Other = F.Spawn(EBattleTeam::Enemy, F.Board->GetTile(3, 3), 10.f, nullptr, 3000.f);
+    if (!Raider || !Blocked || !Chosen || !Other) { AddError(TEXT("Could not deploy ambush test units")); return false; }
+    for (ABattleUnitBase* Unit : {Raider, Blocked, Chosen, Other}) Unit->StartCombat();
+    Raider->CurrentTarget = Other;
+    Blocked->CurrentHP = 1.f;
+    Chosen->CurrentHP = 350.f;
+    Other->CurrentHP = 450.f;
+
+    const auto SetBlocked = [&F](ABattleUnitBase* Target, bool bBlock)
+    {
+        for (ABoardTile* Tile : F.Board->GetNeighbors(Target->CurrentTile)) Tile->bBlocksMovement = bBlock;
+    };
+    SetBlocked(Blocked, true);
+    SetBlocked(Chosen, true);
+    SetBlocked(Other, true);
+    Raider->GainMana(80.f);
+    TestFalse(TEXT("No viable landing means no cast"), Raider->TryCastSkill());
+    TestEqual(TEXT("No target preserves full mana"), Raider->CurrentMana, 80.f);
+    SetBlocked(Chosen, false);
+    SetBlocked(Other, false);
+    SetBlocked(Blocked, true);
+    if (!TestTrue(TEXT("Found at least one reachable enemy"), Raider->TryCastSkill())) return false;
+    ABoardTile* InitialLanding = F.Board->FindCombatLandingTile(Raider, Chosen);
+    if (!TestNotNull(TEXT("Initial landing is available"), InitialLanding)) return false;
+    InitialLanding->bBlocksMovement = true;
+    const int32 CastId = Raider->ActiveActionId;
+    TestTrue(TEXT("Ambush commits"), Raider->CommitSkillEffect(CastId));
+    TestFalse(TEXT("Duplicate commit rejected"), Raider->CommitSkillEffect(CastId));
+    Raider->FinishAction(CastId);
+
+    ABoardTile* Landed = Raider->CurrentTile;
+    if (!TestNotNull(TEXT("Landed tile"), Landed)) return false;
+    TestTrue(TEXT("Landing is adjacent to the enemy with the lowest reachable absolute HP"),
+        ABattleUnitBase::HexDistance(Landed, Chosen->CurrentTile) == 1);
+    TestTrue(TEXT("Landing rechecked on hit"), Landed != InitialLanding);
+    TestTrue(TEXT("Occupancy transferred across the board"), !Start->OccupiedUnit && Landed->OccupiedUnit == Raider && !Landed->IsReserved());
+    TestTrue(TEXT("Actor and tile locations match"), Raider->GetActorLocation().Equals(Landed->GetSurfaceLocation() + FVector(0, 0, 1.f)));
+    TestEqual(TEXT("Only chosen enemy takes 250 percent AD"), Chosen->CurrentHP, 200.f);
+    TestEqual(TEXT("Unreachable enemy excluded"), Blocked->CurrentHP, 1.f);
+    TestEqual(TEXT("Lower health percentage does not win"), Other->CurrentHP, 450.f);
+    TestEqual(TEXT("Ambush grants no basic attack mana"), Raider->CurrentMana, 0.f);
+    TestTrue(TEXT("Surviving target becomes the next basic target"), Raider->CurrentTarget == Chosen);
+
+    SetBlocked(Chosen, true);
+    Raider->GainMana(80.f);
+    if (!TestTrue(TEXT("Adjacent victim can be stabbed without a vacant tile"), Raider->TryCastSkill())) return false;
+    TestTrue(TEXT("Adjacent ambush commits"), Raider->CommitSkillEffect(Raider->ActiveActionId));
+    TestTrue(TEXT("Adjacent ambush does not relocate"), Raider->CurrentTile == Landed);
+    TestEqual(TEXT("Second ambush deals the same damage"), Chosen->CurrentHP, 50.f);
+    Raider->StopCombat();
+    TestTrue(TEXT("Normal round reset restores original preparation tile"),
+        Raider->ResetForRound() && Raider->CurrentTile == Start && Start->OccupiedUnit == Raider);
+    return true;
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBoardPathTest, "ProjectA.Board.Pathfinding",

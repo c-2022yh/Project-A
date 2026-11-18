@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "UObject/Object.h"
 #include "../UnitTypes.h"
+#include "UnitSkillProgress.h"
 #include "UnitSkill.generated.h"
 
 class ABattleUnitBase;
@@ -22,6 +23,21 @@ public:
     UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Skill") bool bAllowTriggeredEvents = false;
 
     virtual UWorld* GetWorld() const override;
+    // 개별 스킬의 전용 BP 항목을 공통 시전 설정으로 변환한다. 초기화 때 한 번 호출한다.
+    virtual FUnitSkillDefinition BuildSettings() const;
+    // 공통 피해 처리에서 인정한 처치 관여. 사망 이벤트 전의 기록 갱신 전용 native 알림이다.
+    // 여기서 피해/전투 종료를 실행하지 않고 스킬 고유 성장 기록만 갱신한다.
+    virtual void OnKillParticipation(ABattleUnitBase* DefeatedUnit);
+    // 일시 카운트/시전은 제외하고 기물 소유 기록에 옮길 상태만 내보낸다.
+    virtual FUnitSkillProgress CapturePersistentProgress() const;
+    virtual bool CanRestorePersistentProgress(const FUnitSkillProgress& State) const;
+    // 반환값은 영구 상태 복원 후 외형을 다시 적용해야 하는지 나타낸다.
+    virtual bool RestorePersistentProgress(const FUnitSkillProgress& State);
+    virtual bool AdvancePreparation();
+    virtual void ApplyPersistentVisuals();
+    // 현재 체력 비율에 따라 공통 공속 계산에 더할 보너스다.
+    virtual float GetHealthBasedAttackSpeedBonus(float HealthRatio) const { return 0.f; }
+    virtual bool MergePersistentProgress(const FUnitSkillProgress& Kept, const FUnitSkillProgress& Material, FUnitSkillProgress& Out) const;
     void ClearExecution();
     void ResetRuntime();
     UFUNCTION(BlueprintNativeEvent, Category="Skill") bool CanUse(ABattleUnitBase* Target) const;
@@ -35,6 +51,9 @@ public:
         const TArray<float>& Values, const FUnitDamageRequest& Context);
     virtual void ApplyImpact_Implementation(const FUnitSkillDefinition& Config, ABattleUnitBase* Target,
         const TArray<float>& Values, const FUnitDamageRequest& Context);
+    // 자신이 부여한 평타 강화가 실제 명중했을 때만 받는다. 피해/회복 규칙은 개별 스킬이 결정한다.
+    UFUNCTION(BlueprintNativeEvent, Category="Skill") void OnEmpoweredAttackHit(const FUnitDamageRequest& Request, const FUnitDamageResult& Result);
+    virtual void OnEmpoweredAttackHit_Implementation(const FUnitDamageRequest& Request, const FUnitDamageResult& Result);
     UFUNCTION(BlueprintImplementableEvent, Category="Skill|Lifecycle") void OnRoundReset();
     UFUNCTION(BlueprintImplementableEvent, Category="Skill|Lifecycle") void OnOwnerDied();
     UFUNCTION(BlueprintImplementableEvent, Category="Skill|Lifecycle") void OnCastStarted(int32 ActionId);
@@ -64,12 +83,6 @@ public:
         const FUnitDamageRequest& Context, const FUnitDamageResult& Result);
     virtual bool ShouldActivate_Implementation(EUnitTrigger Event, const FUnitDamageRequest& Context, const FUnitDamageResult& Result);
 };
-
-// 이전 DT 행과 자동 검사를 읽는 어댑터. 새 유닛은 SkillClasses만 사용한다.
-UCLASS()
-class PROJECT_A_API ULegacyUnitActiveSkill : public UUnitActiveSkill { GENERATED_BODY() };
-UCLASS()
-class PROJECT_A_API ULegacyUnitPassiveSkill : public UUnitPassiveSkill { GENERATED_BODY() };
 
 UCLASS(Blueprintable)
 class PROJECT_A_API UKnightShieldSkill : public UUnitActiveSkill

@@ -4,6 +4,11 @@
 
 ## 실제 구성
 
+견습 용사 액티브의 코드/수치/직접 연결 방법은 [HeroStrikeSetup.md](HeroStrikeSetup.md)를 참고한다.
+성장 패시브의 처치 관여 집계/라운드 보존 범위는 [HeroGrowthSetup.md](HeroGrowthSetup.md)를 참고한다.
+
+DT의 각 항목 의미와 삭제 후보는 [유닛 데이터 안내](../UnitDataGuide.md)를 참고한다.
+
 ```text
 BattleUnitBase
   └─ SkillInstances (유닛마다 새로 생성)
@@ -69,29 +74,35 @@ Context에 공격자/대상/피해 출처/스킬 ID/연쇄 정보, Result에 실
 명시적 연계는 Allow Triggered Events로 허용하되 동일 스킬 재진입과 최대 깊이 제한은 유지한다.
 사망 자체의 정리/고유 반응은 공통 생명주기 이벤트 OnOwnerDied에서 확장할 수 있다.
 
-## 이전 호환과 도구
+## 실행 데이터와 DT 정리
 
-이전 테스트/다른 DT를 깨뜨리지 않도록 `Skills` 직렬화 필드와 Legacy 어댑터를 남겼다.
-SkillClasses가 하나라도 있으면 기존 배열은 실행하지 않는다. 런타임 Definition.Skills는
-시전/투사체용 설정 사본이며 DT를 변경하는 경로가 아니다.
-새 작업은 SkillClasses를 사용한다. 모두 이전된 뒤 Legacy 어댑터 제거를 별도로 검토할 수 있다.
+성장 패시브의 처치 관여, 2성 합성의 최대 기록 상속, 보유 기록/액터 간 이관 API와
+기존 IUnitPlacement 구현에서 연결할 항목은 [HeroGrowthSetup.md](HeroGrowthSetup.md)를 참고한다.
+DT/BP를 자동 변경하지 않으며 진화 효과 자체는 아직 적용하지 않는다.
 
-`Scripts/Editor/MigrateUnitSkills.py`는 네 행의 기존 설정을 스킬 BP로 복사하고 스킬 필드만 바꾸는 에디터 도구다.
-에셋은 이미 이전했으므로 다시 실행할 필요는 없다. 재실행 시 이전된 BP 수치를 초기화하지 않는다.
-전용 C++ MigrationLibrary는 WITH_EDITOR에서만 변경을 허용한다.
-엔진 DT JSON 내보내기에서 발생한 assertion을 피하기 위해 행에 직접 접근한다.
+DT는 SkillClasses만 보관한다. 이전 Skills 필드와 Legacy 어댑터/이전 도구는 제거했다.
+기존 테스트도 DT에 임시 효과를 저장하지 않고 클래스 장착 후 유닛별 스킬 객체를 구성한다.
+실행 설정의 단일 소유자는 스킬 객체의 Settings다. 투사체는 발사 시 필요한 설정/계산값을 복사한다.
+
+성급별 체력/공격력 배율은 UnitProgression의 공통 1.8배를 사용한다.
+스킬별 2성 수치/계수는 기존대로 각 스킬 BP에서 설정한다.
+DT에서 제거한 메타데이터는 Scripts/Editor/Archives/DT_Units.removed-fields.json에 보관했다.
 
 ## 검증과 다음 확인
 
 - Development Editor / Win64 빌드 및 `ProjectA.` 자동 검사.
 - 활성/패시브 동시 장착, 인스턴스/카운트 분리, 잘못된 클래스 거부, 패시브 재귀 필터.
-- 네 실제 BP의 로드/초기화, 1성·2성 스킬 결과의 이전 실행 경로와 비교.
+- 네 실제 BP의 로드/초기화, 1성·2성 스킬 결과의 기존 기준값과 비교.
 - 시전자 사망 후 화염구 명중, 발사 스냅샷, 기존 이동/평타/사망/전투 러너 회귀 검사.
 - 기록: `Saved/SkillMigration/MigrationReport.json`, `Saved/Automation/UnitSkillMigration/index.json`,
   `Saved/Logs/UnitSkillMigration-Automation.log`.
 
+DT 정리 후 최종 검사 기록은 `Saved/Automation/UnitDataCleanup/index.json`,
+`Saved/Logs/UnitDataCleanup-Automation.log`에 있다. 25개 검사 모두 성공했다.
+
 NullRHI 자동 검사는 실제 화면의 애니메이션·화염구·보호막 표시를 보증하지 않는다.
-다음 에디터 확인은 기존 TestMap에서 기사 보호막부터 시작한다. 레벨/유닛 BP 그래프는 이번 이전에서 수정하지 않았다.
+다음 에디터 확인은 기존 TestMap에서 기사 보호막부터 시작한다.
+DT 정리에서는 ABP_Unit의 구조체 노드를 갱신했으며 기존 대기/이동 애니메이션 연결은 유지했다.
 
 2026-11-17 결과: Development Editor 빌드 성공, 자동 검사 25개 모두 성공.
 신규 스킬 검사 5개는 오류/경고 0. 기존 Board.MoveLifecycle 검사의 예상 로그 경고 1개가 포함된다.

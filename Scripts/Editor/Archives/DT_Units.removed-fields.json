@@ -1,0 +1,45 @@
+{
+  "purpose": "Removed DT fields. Historical backup only; runtime does not load this file.",
+  "rows": {
+    "Knight": {
+      "DisplayName": "NSLOCTEXT(\"[0455432F88710728047704F40E6BA2B7]\", \"BA01326640DFD635F4FD22AD267D3D73\", \"기사\")",
+      "Description": "NSLOCTEXT(\"[0455432F88710728047704F40E6BA2B7]\", \"135129DC4BB7A2AED37C708A2A294EA6\", \"기본 유닛 기사\")",
+      "Icon": "None",
+      "RoleTags": "(\"Melee\",\"Tank\")",
+      "StarHealthMultipliers": "(1.000000,1.800000)",
+      "StarAttackMultipliers": "(1.000000,1.800000)",
+      "Skills": "",
+      "HitMontage": "None"
+    },
+    "Mage": {
+      "DisplayName": "NSLOCTEXT(\"[0455432F88710728047704F40E6BA2B7]\", \"84F63C8A457DE072295C83B063D0FF23\", \"마법사\")",
+      "Description": "NSLOCTEXT(\"[0455432F88710728047704F40E6BA2B7]\", \"560F87744E1CBBDA667502BAAF2BBF39\", \"기본 유닛 마법사\")",
+      "Icon": "None",
+      "RoleTags": "(\"Mage\")",
+      "StarHealthMultipliers": "(1.000000,1.800000)",
+      "StarAttackMultipliers": "(1.000000,1.800000)",
+      "Skills": "",
+      "HitMontage": "None"
+    },
+    "Archer": {
+      "DisplayName": "NSLOCTEXT(\"[0455432F88710728047704F40E6BA2B7]\", \"72AAB2F84CE60AAE3850C488BD468A8A\", \"궁수\")",
+      "Description": "NSLOCTEXT(\"[0455432F88710728047704F40E6BA2B7]\", \"2DB7A6DB42B930D9BEE6F4AF5EB5E18C\", \"기본 유닛 궁수\")",
+      "Icon": "None",
+      "RoleTags": "(\"Range\")",
+      "StarHealthMultipliers": "(1.000000,1.800000)",
+      "StarAttackMultipliers": "(1.000000,1.800000)",
+      "Skills": "",
+      "HitMontage": "None"
+    },
+    "Rogue": {
+      "DisplayName": "NSLOCTEXT(\"[0455432F88710728047704F40E6BA2B7]\", \"79282DFE49D01408AB3A82B12E4F5FB8\", \"도적\")",
+      "Description": "NSLOCTEXT(\"[0455432F88710728047704F40E6BA2B7]\", \"F10A17A94781A8E994E5AAA19FD38210\", \"기본 유닛 도적\")",
+      "Icon": "None",
+      "RoleTags": "(\"Melee\")",
+      "StarHealthMultipliers": "(1.000000,1.800000)",
+      "StarAttackMultipliers": "(1.000000,1.800000)",
+      "Skills": "",
+      "HitMontage": "None"
+    }
+  }
+}

@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Engine/DataTable.h"
+#include "../Skills/UnitSkillProgress.h"
 #include "ShopTypes.generated.h"
 
 UENUM(BlueprintType)
@@ -122,6 +123,9 @@ struct FRosterUnit
     // Price paid when purchased. Reward units use their configured base cost.
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Shop")
     int32 BaseCost = 0;
+    // 기물 고유 스킬 기록. 합성 결과/새 전투 Actor에 이관하며 DT 설정과 구분한다.
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Shop")
+    TArray<FUnitSkillProgress> SkillProgress;
 };
 
 UENUM(BlueprintType)

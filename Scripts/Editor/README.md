@@ -19,8 +19,7 @@
 
 ## 클래스 기반 스킬 이전
 
-`MigrateUnitSkills.py`는 DT_Units의 기사/마법사/궁수/도적 스킬을 각각 스킬 BP로 이전하는 도구다.
-현재 에셋에는 이미 적용했다. 구조와 설정 위치는 [스킬 안내](../../Source/Project_A/Skills/README.md)를 참고한다.
+기사/마법사/궁수/도적의 스킬 BP 이전은 완료했다. 이전 DT 효과 필드와 일회성 이전 도구는 제거했다. 구조와 설정 위치는 [스킬 안내](../../Source/Project_A/Skills/README.md)를 참고한다.
 
 ## 런타임 흐름
 

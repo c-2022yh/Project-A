@@ -237,6 +237,8 @@ public:
 
     UFUNCTION(BlueprintPure, Category="Board|Path") ABoardTile* GetTileByHex(int32 Q, int32 R) const;
     UFUNCTION(BlueprintPure, Category="Board|Path") TArray<ABoardTile*> GetNeighbors(ABoardTile* Tile) const;
+    ABoardTile* FindCombatLandingTile(const ABattleUnitBase* Unit, const ABattleUnitBase* Target) const;
+    bool TryCombatLanding(ABattleUnitBase* Unit, ABattleUnitBase* Target, int32 ActionId);
     UFUNCTION(BlueprintPure, Category="Board|Units") TArray<ABattleUnitBase*> GetUnitsOnBoard() const;
     // 경로에는 출발 칸을 제외하고 도착 칸까지 담는다. 이미 사거리 안이면 빈 경로로 성공한다.
     UFUNCTION(BlueprintCallable, Category="Board|Path")

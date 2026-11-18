@@ -65,7 +65,7 @@ public:
 private:
     ETransactionResult AddUnit(const FShopOffer& Offer, int32 Stars, bool bReward);
     ETransactionResult ChangeEquipment(FGuid UnitId, FName ItemId, TOptional<int32> UnequipSlot);
-    void PlanMerge(FName UnitId, const FRosterUnit* Incoming, FUnitPosition Destination,
+    bool PlanMerge(FName UnitId, const FRosterUnit* Incoming, FUnitPosition Destination,
         TArray<FRosterUnitChange>& Changes, AItemManager::FState& ItemState) const;
     bool ApplyChanges(TArray<FRosterUnitChange>& Changes, AItemManager::FState&& ItemState, EShopPhase Phase, int32 Limit);
 };

@@ -1145,6 +1145,57 @@ TArray<ABattleUnitBase*> ABoardManager::GetUnitsOnBoard() const
     }
     return Result;
 }
+ABoardTile* ABoardManager::FindCombatLandingTile(const ABattleUnitBase* Unit, const ABattleUnitBase* Target) const
+{
+    if (bReleasingUnits || !IsValid(Unit) || !Unit->bInCombat || !Unit->IsAlive() || !Unit->IsEnemyTarget(Target)
+        || !OwnsTile(Unit->CurrentTile) || !OwnsTile(Target->CurrentTile)
+        || Unit->CurrentTile->OccupiedUnit != Unit || Target->CurrentTile->OccupiedUnit != Target) return nullptr;
+
+    ABoardTile* Source = Unit->CurrentTile;
+    if (ABattleUnitBase::HexDistance(Source, Target->CurrentTile) == 1) return Source;
+
+    ABoardTile* Best = nullptr;
+    int32 BestDistance = MAX_int32;
+    for (ABoardTile* Tile : GetNeighbors(Target->CurrentTile))
+    {
+        if (!Tile->CanPlaceUnit()) continue;
+        const int32 Distance = ABattleUnitBase::HexDistance(Source, Tile);
+        if (Distance < BestDistance)
+        {
+            Best = Tile;
+            BestDistance = Distance;
+        }
+    }
+    return Best;
+}
+
+bool ABoardManager::TryCombatLanding(ABattleUnitBase* Unit, ABattleUnitBase* Target, int32 ActionId)
+{
+    if (!IsValid(Unit) || ActionId <= 0 || Unit->ActiveActionId != ActionId
+        || Unit->ActionState != EUnitActionState::Casting || Reservations.Contains(Unit)) return false;
+
+    // Resolve the destination again at impact. A tile can become occupied after target selection.
+    ABoardTile* Destination = FindCombatLandingTile(Unit, Target);
+    if (!Destination) return false;
+    ABoardTile* Source = Unit->CurrentTile;
+    if (Source == Destination) return true;
+
+    const FVector Goal = Destination->GetSurfaceLocation() + FVector(0, 0, 1.f);
+    // Switch occupancy before moving the actor: overlap callbacks see the committed tile.
+    Source->ClearOccupant();
+    Destination->AssignOccupant(Unit);
+    const bool bMoved = Unit->SetActorLocation(Goal, false, nullptr, ETeleportType::TeleportPhysics)
+        || Unit->GetActorLocation().Equals(Goal);
+    if (!bMoved && IsValid(Destination) && Destination->OccupiedUnit == Unit
+        && IsValid(Source) && Source->CanPlaceUnit())
+    {
+        Destination->ClearOccupant();
+        Source->AssignOccupant(Unit);
+    }
+    return bMoved && IsValid(Unit) && Unit->bInCombat && Unit->IsAlive() && Unit->ActiveActionId == ActionId
+        && IsValid(Destination) && Unit->CurrentTile == Destination && Destination->OccupiedUnit == Unit;
+}
+
 bool ABoardManager::BuildPath(ABattleUnitBase* Unit, ABattleUnitBase* Target, bool bIgnoreUnits, TArray<ABoardTile*>& Path) const
 {
     Path.Reset();

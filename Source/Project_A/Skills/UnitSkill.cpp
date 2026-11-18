@@ -10,6 +10,16 @@ UWorld* UUnitSkillBase::GetWorld() const
     return !HasAnyFlags(RF_ClassDefaultObject) && IsValid(OwnerUnit) ? OwnerUnit->GetWorld() : nullptr;
 }
 
+FUnitSkillDefinition UUnitSkillBase::BuildSettings() const { return Settings; }
+void UUnitSkillBase::OnKillParticipation(ABattleUnitBase* DefeatedUnit) {}
+FUnitSkillProgress UUnitSkillBase::CapturePersistentProgress() const { return {}; }
+bool UUnitSkillBase::CanRestorePersistentProgress(const FUnitSkillProgress& State) const { return false; }
+bool UUnitSkillBase::RestorePersistentProgress(const FUnitSkillProgress& State) { return false; }
+bool UUnitSkillBase::AdvancePreparation() { return false; }
+void UUnitSkillBase::ApplyPersistentVisuals() {}
+bool UUnitSkillBase::MergePersistentProgress(const FUnitSkillProgress& Kept, const FUnitSkillProgress& Material, FUnitSkillProgress& Out) const { return false; }
+void UUnitSkillBase::OnEmpoweredAttackHit_Implementation(const FUnitDamageRequest& Request, const FUnitDamageResult& Result) {}
+
 void UUnitSkillBase::ClearExecution()
 {
     if (UWorld* World = GetWorld())
