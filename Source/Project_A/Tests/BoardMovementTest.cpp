@@ -3,6 +3,10 @@
 #include "../BoardManager.h"
 #include "../BoardTile.h"
 #include "../BattleUnitBase.h"
+#include "../Skills/BlackfeatherArrowRainSkill.h"
+#include "../Skills/AssassinShadowStrikeSkill.h"
+#include "../Skills/DirectionalMeleeSkills.h"
+#include "../Skills/ElementalistSkill.h"
 #include "../Skills/RaiderAmbushSkill.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
@@ -63,6 +67,204 @@ namespace BoardMovementTests
             return nullptr;
         }
     };
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDirectionalMeleeSkillTest, "ProjectA.Unit.DirectionalMelee.LockedCastTiles",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FDirectionalMeleeSkillTest::RunTest(const FString& Parameters)
+{
+    using namespace BoardMovementTests;
+    for (int32 Pattern = 0; Pattern < 3; ++Pattern)
+    {
+        const bool bSpear = Pattern == 1;
+        const bool bDarkKnight = Pattern == 2;
+        FFixture F;
+        ABoardTile* Origin = F.Board->GetTile(2, 2);
+        if (!TestNotNull(TEXT("Interior tile exists"), Origin)) return false;
+        const int32 Q = Origin->HexQ;
+        const int32 R = Origin->HexR;
+        ABoardTile* Front = F.Board->GetTileByHex(Q + 1, R);
+        ABoardTile* Left = F.Board->GetTileByHex(Q + 1, R - 1);
+        ABoardTile* Right = F.Board->GetTileByHex(Q, R + 1);
+        ABoardTile* Behind = F.Board->GetTileByHex(Q + 2, R);
+        if (!Front || !Left || !Right || !Behind) { AddError(TEXT("Expected a complete test pattern")); return false; }
+        Origin->TeamType = EBoardTileTeam::Player;
+        for (ABoardTile* Tile : {Front, Left, Right, Behind}) Tile->TeamType = EBoardTileTeam::Enemy;
+        UClass* Skill = bSpear ? USpearmanPiercingThrustSkill::StaticClass() : UBarbarianGroundSlamSkill::StaticClass();
+        if (bDarkKnight) Skill = UDarkKnightJudgmentSkill::StaticClass();
+        ABattleUnitBase* Caster = F.Spawn(EBattleTeam::Player, Origin, 100.f, Skill);
+        ABattleUnitBase* FrontUnit = F.Spawn(EBattleTeam::Enemy, Front);
+        ABattleUnitBase* LeftUnit = F.Spawn(EBattleTeam::Enemy, Left);
+        ABattleUnitBase* RightUnit = F.Spawn(EBattleTeam::Enemy, Right);
+        ABattleUnitBase* BackUnit = F.Spawn(EBattleTeam::Enemy, Behind);
+        if (!Caster || !FrontUnit || !LeftUnit || !RightUnit || !BackUnit) { AddError(TEXT("Could not deploy test units")); return false; }
+        RightUnit->CombatPolicy.StunDurationMultiplier = 0.5f;
+        for (ABattleUnitBase* Unit : {Caster, FrontUnit, LeftUnit, RightUnit, BackUnit}) Unit->StartCombat();
+
+        Caster->CurrentTarget = FrontUnit;
+        Caster->GainMana(80.f);
+        if (!TestTrue(TEXT("Adjacent primary target starts cast"), Caster->TryCastSkill())) return false;
+        const int32 ActionId = Caster->ActiveActionId;
+        Caster->CurrentTarget = LeftUnit;
+        TestTrue(TEXT("Cast resolves the original tiles despite retargeting"), Caster->CommitSkillEffect(ActionId));
+        TestFalse(TEXT("Duplicate impact is rejected"), Caster->CommitSkillEffect(ActionId));
+        Caster->FinishAction(ActionId);
+        TestEqual(TEXT("Primary tile takes primary skill damage without a crit"), FrontUnit->CurrentHP,
+            bDarkKnight ? 880.f : (bSpear ? 780.f : 750.f));
+        const float FlankHP = bDarkKnight ? 880.f : (bSpear ? 1000.f : 920.f);
+        TestEqual(TEXT("Left flank"), LeftUnit->CurrentHP, FlankHP);
+        TestEqual(TEXT("Right flank"), RightUnit->CurrentHP, FlankHP);
+        TestEqual(TEXT("Behind primary tile"), BackUnit->CurrentHP, bSpear ? 860.f : 1000.f);
+        if (bDarkKnight)
+        {
+            TestTrue(TEXT("Judgment stuns only its three occupied tiles"),
+                FrontUnit->IsStunned() && LeftUnit->IsStunned() && RightUnit->IsStunned() && !BackUnit->IsStunned());
+            RightUnit->Tick(0.75f);
+            FrontUnit->Tick(0.75f);
+            TestFalse(TEXT("Resistant enemy recovers after 0.75 seconds"), RightUnit->IsStunned());
+            TestTrue(TEXT("Normal enemy stays stunned"), FrontUnit->IsStunned());
+        }
+
+        if (bSpear)
+        {
+            Caster->CurrentTarget = FrontUnit;
+            Caster->GainMana(80.f);
+            if (!TestTrue(TEXT("Repeat cast starts while front is occupied"), Caster->TryCastSkill())) return false;
+            FUnitDamageRequest Fatal;
+            Fatal.RawDamage = 10000.f;
+            Fatal.Type = EUnitDamageType::TrueDamage;
+            TestTrue(TEXT("Front tile empties before impact"), FrontUnit->ReceiveDamage(Fatal).bKilled);
+            TestTrue(TEXT("Empty front does not cancel back tile impact"), Caster->CommitSkillEffect(Caster->ActiveActionId));
+            TestEqual(TEXT("Back enemy takes another thrust"), BackUnit->CurrentHP, 720.f);
+        }
+    }
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAssassinShadowStrikeTest, "ProjectA.Unit.AssassinShadowStrike.StealthAndLanding",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FAssassinShadowStrikeTest::RunTest(const FString& Parameters)
+{
+    using namespace BoardMovementTests;
+    FFixture F;
+    ABoardTile* Start = F.Board->GetTile(0, 0);
+    ABoardTile* NearTile = F.Board->GetTile(0, 1);
+    NearTile->TeamType = EBoardTileTeam::Enemy;
+    ABattleUnitBase* Assassin = F.Spawn(EBattleTeam::Player, Start, 80.f, UAssassinShadowStrikeSkill::StaticClass());
+    ABattleUnitBase* Near = F.Spawn(EBattleTeam::Enemy, NearTile);
+    ABattleUnitBase* Far = F.Spawn(EBattleTeam::Enemy, F.Board->GetTile(5, 4));
+    if (!Assassin || !Near || !Far) { AddError(TEXT("Could not deploy shadow strike test units")); return false; }
+    for (ABattleUnitBase* Unit : {Assassin, Near, Far}) Unit->StartCombat();
+    Near->CurrentTarget = Assassin;
+    if (!TestTrue(TEXT("Existing swing starts before stealth"), Near->TryBasicAttack())) return false;
+    Assassin->GainMana(Assassin->FinalStats.MaxMana);
+    if (!TestTrue(TEXT("Assassin begins a cast"), Assassin->TryCastSkill())) return false;
+    TestTrue(TEXT("Cannot select the stealthed unit for a new swing"),
+        Assassin->IsCombatStealthed() && !Near->IsEnemyAttackTarget(Assassin));
+    TestTrue(TEXT("An already started attack can still hit"), Near->CommitAttackHit(Near->ActiveActionId));
+    TestEqual(TEXT("Stealth does not reduce damage"), Assassin->CurrentHP, 990.f);
+    Assassin->Tick(0.24f);
+    TestTrue(TEXT("Stealth and starting tile persist before cast completes"),
+        Assassin->IsCombatStealthed() && Assassin->CurrentTile == Start);
+    Assassin->Tick(0.02f);
+    TestFalse(TEXT("Stealth ends on impact"), Assassin->IsCombatStealthed());
+    TestEqual(TEXT("Only the farthest target takes 150 percent AD"), Far->CurrentHP, 880.f);
+    TestEqual(TEXT("Nearer target is untouched"), Near->CurrentHP, 1000.f);
+    TestTrue(TEXT("Assassin occupies a neighboring tile and targets its victim"),
+        Assassin->CurrentTarget == Far && ABattleUnitBase::HexDistance(Assassin->CurrentTile, Far->CurrentTile) == 1);
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FElementalistMeteorTest, "ProjectA.Unit.Elementalist.FormManaAndMeteor",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FElementalistMeteorTest::RunTest(const FString& Parameters)
+{
+    using namespace BoardMovementTests;
+    FFixture F;
+    ABattleUnitBase* Caster = F.Spawn(EBattleTeam::Player, F.Board->GetTile(0, 0), 20.f, UElementalistSkill::StaticClass());
+    ABattleUnitBase* Center = F.Spawn(EBattleTeam::Enemy, F.Board->GetTile(5, 2));
+    ABattleUnitBase* Inner = F.Spawn(EBattleTeam::Enemy, F.Board->GetTile(5, 3));
+    ABattleUnitBase* Outer = F.Spawn(EBattleTeam::Enemy, F.Board->GetTile(5, 4));
+    if (!Caster || !Center || !Inner || !Outer) { AddError(TEXT("Could not deploy meteor test units")); return false; }
+    auto* Skill = Cast<UElementalistSkill>(Caster->GetEquippedSkills()[0]);
+    if (!TestNotNull(TEXT("Elementalist skill"), Skill)) return false;
+    TestEqual(TEXT("Default Frost max mana"), Caster->FinalStats.MaxMana, 45.f);
+    TestTrue(TEXT("Choose Fire in preparation"), Skill->SetForm(EElementalForm::Fire));
+    TestEqual(TEXT("Fire max mana"), Caster->FinalStats.MaxMana, 100.f);
+    TestTrue(TEXT("Fire selection survives a round reset"), Caster->ResetForRound() && Skill->GetForm() == EElementalForm::Fire);
+    if (!TestTrue(TEXT("Caster placed for combat"), Caster->PlaceOnTile(F.Board->GetTile(0, 0)))) return false;
+    Caster->SetStarLevel(2);
+    FUnitStatModifier AP;
+    AP.AbilityPower = 100.f;
+    Caster->ApplyUpgrade(TEXT("AP"), AP);
+    for (ABattleUnitBase* Unit : {Caster, Center, Inner, Outer}) Unit->StartCombat();
+    TestFalse(TEXT("Cannot change element midfight"), Skill->SetForm(EElementalForm::Frost));
+    Caster->CurrentTarget = Center;
+    Caster->GainMana(100.f);
+    if (!TestTrue(TEXT("Begins meteor in combat"), Caster->TryCastSkill())) return false;
+    TestFalse(TEXT("Meteor was already scheduled at cast start"), Caster->CommitSkillEffect(Caster->ActiveActionId));
+    Caster->Tick(0.8f);
+    TestTrue(TEXT("Caster can resume fighting before the meteor lands"), Caster->ActionState != EUnitActionState::Casting);
+    TestEqual(TEXT("No early meteor damage"), Center->CurrentHP, 1000.f);
+
+    FUnitDamageRequest Fatal;
+    Fatal.RawDamage = 10000.f;
+    Fatal.Type = EUnitDamageType::TrueDamage;
+    TestTrue(TEXT("Caster dies with a pending meteor"), Caster->ReceiveDamage(Fatal).bKilled);
+    Caster->Tick(0.6f);
+    TestEqual(TEXT("Meteor still waits for the full delay"), Center->CurrentHP, 1000.f);
+    Caster->Tick(0.1f);
+    TestEqual(TEXT("The current target wins the tie and takes full 450 percent AP"), Center->CurrentHP, 550.f);
+    TestEqual(TEXT("Distance one takes 65 percent"), Inner->CurrentHP, 707.5f);
+    TestEqual(TEXT("Distance two takes 40 percent"), Outer->CurrentHP, 820.f);
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBlackfeatherArrowRainTest, "ProjectA.Unit.BlackfeatherArrowRain.FixedTileImpact",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FBlackfeatherArrowRainTest::RunTest(const FString& Parameters)
+{
+    using namespace BoardMovementTests;
+    FFixture F;
+    ABattleUnitBase* Archer = F.Spawn(EBattleTeam::Player, F.Board->GetTile(0, 0), 65.f,
+        UBlackfeatherArrowRainSkill::StaticClass());
+    ABattleUnitBase* Lone = F.Spawn(EBattleTeam::Enemy, F.Board->GetTile(4, 0));
+    ABattleUnitBase* Cluster = F.Spawn(EBattleTeam::Enemy, F.Board->GetTile(5, 3));
+    ABattleUnitBase* Escapes = F.Spawn(EBattleTeam::Enemy, F.Board->GetTile(5, 4));
+    if (!Archer || !Lone || !Cluster || !Escapes) { AddError(TEXT("Could not deploy arrow rain test units")); return false; }
+    FUnitStatModifier Armor;
+    Armor.Armor = 100.f;
+    Cluster->ApplyUpgrade(TEXT("Armor"), Armor);
+    for (ABattleUnitBase* Unit : {Archer, Lone, Cluster, Escapes}) Unit->StartCombat();
+    Archer->CurrentTarget = Lone;
+    Archer->GainMana(80.f);
+    if (!TestTrue(TEXT("Can cast across the board"), Archer->TryCastSkill())) return false;
+    const int32 CastId = Archer->ActiveActionId;
+    TestTrue(TEXT("Arrow rain is launched"), Archer->CommitSkillEffect(CastId));
+    Archer->FinishAction(CastId);
+    TestEqual(TEXT("Target HP stays unchanged at launch"), Cluster->CurrentHP, 1000.f);
+
+    Escapes->StopCombat();
+    if (!TestTrue(TEXT("Second enemy changes its occupied tile before impact"),
+        Escapes->ResetForRound() && Escapes->PlaceOnTile(F.Board->GetTile(3, 0)))) return false;
+    Escapes->StartCombat();
+
+    FUnitDamageRequest Fatal;
+    Fatal.RawDamage = 10000.f;
+    Fatal.Type = EUnitDamageType::TrueDamage;
+    TestTrue(TEXT("Archer dies after launch"), Archer->ReceiveDamage(Fatal).bKilled);
+    Archer->Tick(0.25f);
+    TestEqual(TEXT("Halfway to impact still does no damage"), Cluster->CurrentHP, 1000.f);
+    Archer->Tick(0.25f);
+    TestTrue(TEXT("Highest count fixed region hits once after archer dies with armor reduction already active"),
+        FMath::IsNearlyEqual(Cluster->CurrentHP, 1000.f - 117.f / 1.7f, 0.001f));
+    TestEqual(TEXT("Armor reduced to 70"), Cluster->FinalStats.Armor, 70.f);
+    TestEqual(TEXT("Lone basic attack target loses to the larger cluster"), Lone->CurrentHP, 1000.f);
+    TestEqual(TEXT("Enemy that left the impact region is unharmed"), Escapes->CurrentHP, 1000.f);
+    Archer->Tick(0.5f);
+    TestTrue(TEXT("Impact does not repeat"),
+        FMath::IsNearlyEqual(Cluster->CurrentHP, 1000.f - 117.f / 1.7f, 0.001f));
+    return true;
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRaiderAmbushTest, "ProjectA.Unit.RaiderAmbush.CombatLanding",

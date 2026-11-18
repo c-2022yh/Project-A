@@ -25,7 +25,7 @@ ABattleUnitBase* URaiderAmbushSkill::SelectTarget_Implementation() const
     int32 BestDistance = MAX_int32;
     for (ABattleUnitBase* Unit : Board->GetUnitsOnBoard())
     {
-        if (!OwnerUnit->IsEnemyTarget(Unit) || (Best && Unit->CurrentHP > Best->CurrentHP)
+        if (!OwnerUnit->IsEnemyAttackTarget(Unit) || (Best && Unit->CurrentHP > Best->CurrentHP)
             || !Board->FindCombatLandingTile(OwnerUnit, Unit)) continue;
 
         // 체력 수치가 같으면 가까운 적을 우선한다. 거리도 같으면 보드 순서를 유지한다.

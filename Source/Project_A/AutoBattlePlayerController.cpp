@@ -8,8 +8,24 @@
 #include "Components/CapsuleComponent.h"
 #include "DrawDebugHelpers.h"
 #include "Engine/World.h"
+#include "EngineUtils.h"
 #include "GameFramework/HUD.h"
 #include "Kismet/GameplayStatics.h"
+#include "Shop/ShopPanel.h"
+#include "Shop/ShopTransactionManager.h"
+
+namespace
+{
+    TOptional<ETransactionResult> MoveRegisteredElementalist(ABattleUnitBase* Unit, FUnitPosition Position)
+    {
+        for (TActorIterator<AShopTransactionManager> It(Unit->GetWorld()); It; ++It)
+        {
+            ETransactionResult Result;
+            if (It->TryMoveRegisteredElementalist(Unit, Position, Result)) return Result;
+        }
+        return {};
+    }
+}
 
 // Drop callbacks see the final placement before receiving the drag-ended notification.
 struct AAutoBattlePlayerController::FScopedDragNotifications
@@ -189,7 +205,19 @@ bool AAutoBattlePlayerController::PlaceSelectedUnitOnTile(ABoardTile* Tile)
     if (DragSessionRevision != ExpectedRevision || IsUnitDragActive()
         || !IsValid(Unit) || SelectedUnit != Unit || !IsValid(Tile)) return false;
     ABoardManager* Board = GetBoardManager();
-    if (!IsValid(Board) || !Board->TryPlaceUnitOnTile(Unit, Tile)) return false;
+    if (!IsValid(Board)) return false;
+    if (Board->IsPlacementEnabled() && Board->CanInteractWithUnit(Unit) && Tile->OwningBoard == Board
+        && Tile->TeamType == EBoardTileTeam::Player)
+    {
+        const auto Result = MoveRegisteredElementalist(Unit, {EUnitLocation::Board, Tile->Row, Tile->Column});
+        if (Result.IsSet())
+        {
+            if (*Result != ETransactionResult::Success && *Result != ETransactionResult::FormChoiceRequired) return false;
+            if (SelectedUnit == Unit && !bUnitDragPending) ClearSelection();
+            return true;
+        }
+    }
+    if (!Board->TryPlaceUnitOnTile(Unit, Tile)) return false;
     // A successful placement event may select a different unit or begin a new drag.
     if (SelectedUnit == Unit && !bUnitDragPending) ClearSelection();
     return true;
@@ -204,7 +232,18 @@ bool AAutoBattlePlayerController::MoveSelectedUnitToBench(ABenchTile* Slot)
     if (DragSessionRevision != ExpectedRevision || IsUnitDragActive()
         || !IsValid(Unit) || SelectedUnit != Unit || !IsValid(Slot)) return false;
     ABoardManager* Board = GetBoardManager();
-    if (!IsValid(Board) || !Board->TryMoveUnitToBench(Unit, Slot)) return false;
+    if (!IsValid(Board)) return false;
+    if (Board->IsPlacementEnabled() && Board->CanInteractWithUnit(Unit) && Board->GetBenchSlot(Slot->SlotIndex) == Slot)
+    {
+        const auto Result = MoveRegisteredElementalist(Unit, {EUnitLocation::Bench, INDEX_NONE, Slot->SlotIndex});
+        if (Result.IsSet())
+        {
+            if (*Result != ETransactionResult::Success) return false;
+            if (SelectedUnit == Unit && !bUnitDragPending) ClearSelection();
+            return true;
+        }
+    }
+    if (!Board->TryMoveUnitToBench(Unit, Slot)) return false;
     if (SelectedUnit == Unit && !bUnitDragPending) ClearSelection();
     return true;
 }
@@ -223,12 +262,13 @@ bool AAutoBattlePlayerController::GetBoardClickHit(FHitResult& Hit)
     return GetHitResultUnderCursor(ECC_Visibility, true, Hit);
 }
 
-// [UI 연결 경계] Canvas HitBox만 확인한다. UMG 팝업을 포함한 전역 차단은 BoardManager의 사유별 잠금 호출이 필요하다.
+// Canvas 상점 버튼이나 HUD HitBox 위에서는 보드 입력을 보류한다.
 bool AAutoBattlePlayerController::IsPointerOverHUD() const
 {
     float X = 0.0f;
     float Y = 0.0f;
     if (!GetMousePosition(X, Y)) return false;
+    if (const UShopPanel* Panel = GetWorld()->GetSubsystem<UShopPanel>(); Panel && Panel->IsOverButton(FVector2D(X, Y))) return true;
     return GetHUD() && GetHUD()->GetHitBoxAtCoordinates(FVector2D(X, Y), true) != nullptr;
 }
 

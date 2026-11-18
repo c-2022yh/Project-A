@@ -134,6 +134,9 @@ public:
     UFUNCTION(BlueprintCallable, Category="Unit|Combat") void SetOvertimeBonuses(float AttackSpeedBonus, float DamageBonus);
     UFUNCTION(BlueprintCallable, Category="Unit|Combat") bool TryBasicAttack();
     UFUNCTION(BlueprintCallable, Category="Unit|Combat") bool CommitAttackHit(int32 ActionId);
+    UFUNCTION(BlueprintCallable, Category="Unit|Combat") bool CommitFollowupAttackHit(int32 ActionId);
+    UFUNCTION(BlueprintPure, Category="Unit|Combat") bool IsCombatStealthed() const;
+    void BeginCastStealth(int32 ActionId);
     UFUNCTION(BlueprintCallable, Category="Unit|Combat") bool TryCastSkill();
     UFUNCTION(BlueprintCallable, Category="Unit|Combat") bool CommitSkillEffect(int32 ActionId);
     UFUNCTION(BlueprintCallable, Category="Unit|Combat") bool FinishAction(int32 ActionId);
@@ -146,8 +149,14 @@ public:
     UFUNCTION(BlueprintPure, Category="Unit|Effects") float GetPeriodicDamageRemaining(FName EffectId) const;
     bool ApplyPeriodicMagicDamage(FName EffectId, ABattleUnitBase* Source, int32 ActionId, float DamagePerTick,
         float SecondsPerTick, int32 TickCount, float MagicResistanceReduction);
+    bool ApplyPeriodicHealing(FName EffectId, ABattleUnitBase* Source, float HealingPerTick, int32 TickCount,
+        float AttackDamageBonus, float AbilityPowerBonus);
+    float GetAbilityPowerWithoutPeriodicEffect(FName EffectId) const;
+    bool QueueTileImpact(UUnitSkillBase* Skill, const TArray<ABoardTile*>& Tiles, float Delay, int32 ActionId,
+        const TArray<float>& DamageScales = {});
     const TArray<TObjectPtr<ABattleUnitBase>>& GetCombatRoster() const { return CombatRoster; }
     bool IsEnemyTarget(const ABattleUnitBase* Target) const;
+    bool IsEnemyAttackTarget(const ABattleUnitBase* Target) const;
     UFUNCTION(BlueprintCallable, Category="Unit|Effects") bool EmpowerNextAttack(FName EffectId, float Multiplier, float FlatDamage, float Duration);
     // 스킬 출처가 있는 강화는 실제 명중까지 유지한다. 회복 등 결과 처리는 출처 스킬에 알린다.
     UFUNCTION(BlueprintCallable, Category="Unit|Effects") bool ArmNextBasicAttack(UUnitSkillBase* SourceSkill, float TotalAttackDamageRatio);
@@ -168,21 +177,37 @@ public:
     UFUNCTION(BlueprintImplementableEvent, Category="Unit|Visual") void ProjectileRemoved(int32 ProjectileId, bool bHit);
 private:
     friend class UUnitSkillBase;
-    struct FPeriodicDamage
+    struct FPeriodicEffect
     {
         TWeakObjectPtr<ABattleUnitBase> Source;
         int32 SourceGeneration = 0;
         int32 ActionId = 0;
         uint32 Revision = 0;
-        float DamagePerTick = 0.f;
+        float AmountPerTick = 0.f;
         float OffenseMultiplier = 1.f;
         float MagicResistanceReduction = 0.f;
+        float AttackDamageBonus = 0.f;
+        float AbilityPowerBonus = 0.f;
+        bool bHealing = false;
         double Interval = 0.0;
         double TimeUntilTick = 0.0;
         double RemainingSeconds = 0.0;
     };
-    TMap<FName, FPeriodicDamage> PeriodicDamage;
-    uint32 PeriodicDamageRevision = 0;
+    TMap<FName, FPeriodicEffect> PeriodicEffects;
+    uint32 PeriodicEffectRevision = 0;
+    float AbilityPowerBeforePeriodicBonuses = 0.f;
+    float PeriodicAbilityPowerBonus = 0.f;
+    struct FPendingTileImpact
+    {
+        TArray<TWeakObjectPtr<ABoardTile>> Tiles;
+        TArray<float> DamageScales;
+        TWeakObjectPtr<UUnitSkillBase> Skill;
+        FUnitSkillDefinition Config;
+        FUnitDamageRequest Context;
+        TArray<float> Values;
+        float Remaining = 0.f;
+    };
+    TArray<FPendingTileImpact> PendingTileImpacts;
     struct FPendingProjectile
     {
         int32 Id = 0;
@@ -237,7 +262,16 @@ private:
     EUnitPlacement PreparationPlacement = EUnitPlacement::Unplaced;
     FUnitDamageRequest TriggerContext;
     FUnitDamageRequest ActiveAttackDamage;
+    FUnitDamageRequest FollowupAttackDamage;
     float ActiveAttackDamageStat = 0.f;
+    float ActiveAttackCriticalMultiplier = 1.f;
+    float FollowupAttackTimeRatio = 0.f;
+    int32 StealthActionId = 0;
+    bool bHasFollowupAttack = false;
+    bool bFollowupAttackCommitted = false;
+    bool bFollowupUsesNotify = false;
+    bool bMeleeHitReported = false;
+    bool bMeleePrimaryResolving = false;
     int32 ActionSequence = 0;
     int32 CombatGeneration = 0;
     int32 ActiveSkillIndex = INDEX_NONE;
@@ -277,7 +311,8 @@ private:
     void TickDeathVisual(float Delta);
     void RefreshShieldTotal();
     void TickEffects(float Delta);
-    void TickPeriodicDamage(float Delta);
+    void TickPeriodicEffects(float Delta);
+    void TickTileImpacts(float Delta);
     void TickProjectiles(float Delta);
     void TickAction(float Delta);
     void Think(float Delta);

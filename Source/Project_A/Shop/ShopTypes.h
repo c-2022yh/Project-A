@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "Engine/DataTable.h"
 #include "../Skills/UnitSkillProgress.h"
+#include "../Skills/ElementalForm.h"
 #include "ShopTypes.generated.h"
 
 UENUM(BlueprintType)
@@ -14,7 +15,7 @@ enum class EShopPhase : uint8
 UENUM(BlueprintType)
 enum class ETransactionResult : uint8
 {
-    Success, WrongPhase, InvalidSelection, InsufficientGold, NoSpace, Unavailable, ChangeRejected
+    Success, WrongPhase, InvalidSelection, InsufficientGold, NoSpace, Unavailable, ChangeRejected, FormChoiceRequired
 };
 
 UENUM(BlueprintType)
@@ -126,6 +127,8 @@ struct FRosterUnit
     // 기물 고유 스킬 기록. 합성 결과/새 전투 Actor에 이관하며 DT 설정과 구분한다.
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Shop")
     TArray<FUnitSkillProgress> SkillProgress;
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Shop")
+    EElementalForm ElementalForm = EElementalForm::Unselected;
 };
 
 UENUM(BlueprintType)

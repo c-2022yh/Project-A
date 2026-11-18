@@ -8,6 +8,8 @@
 #include "../ShopOdds.h"
 #include "Engine/World.h"
 #include "TestPlacement.h"
+#include "../../BattleUnitBase.h"
+#include "../../Skills/ElementalistSkill.h"
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FShopTransactionsTest, "ProjectA.Shop.Transactions",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::CommandletContext | EAutomationTestFlags::EngineFilter)
@@ -284,6 +286,61 @@ bool FShopTransactionsTest::RunTest(const FString& Parameters)
     TestEqual(TEXT("Full bench without an immediate merge blocks purchase"), Transactions->RequestBuy(2, FullBenchRevision), ETransactionResult::NoSpace);
     TestEqual(TEXT("Blocked purchase keeps gold"), Shop->GetGold(), 18);
     TestEqual(TEXT("Blocked purchase keeps offer"), Shop->GetOffers()[2].UnitId, UnitType);
+
+    if (!TestTrue(TEXT("Configure elemental deployment match"), StartMatch(20))) return false;
+    Transactions->ElementalistUnitId = UnitType;
+    if (!TestEqual(TEXT("Grant elementalist"), Transactions->GrantStartingUnit(UnitType), ETransactionResult::Success)
+        || !TestEqual(TEXT("Grant ordinary unit"), Transactions->GrantStartingUnit(OtherType), ETransactionResult::Success)
+        || !TestTrue(TEXT("Begin elemental deployment preparation"), Transactions->EnterPreparation(1, 2))) return false;
+    const FGuid Elementalist = Roster->GetUnits()[0].Id;
+    const FGuid Normal = Roster->GetUnits()[1].Id;
+    UDataTable* ElementalData = NewObject<UDataTable>(World);
+    ElementalData->RowStruct = FUnitDefinition::StaticStruct();
+    FUnitDefinition ElementalDefinition;
+    ElementalDefinition.SkillClasses = {UElementalistSkill::StaticClass()};
+    ElementalData->AddRow(UnitType, ElementalDefinition);
+    FDataTableRowHandle ElementalRow;
+    ElementalRow.RowName = UnitType;
+    ElementalRow.DataTable = ElementalData;
+    ABattleUnitBase* ElementalActor = World->SpawnActor<ABattleUnitBase>();
+    FString InitError;
+    if (!TestTrue(TEXT("Initialize a real elementalist for projection"),
+        IsValid(ElementalActor) && ElementalActor->InitializeUnit(ElementalRow, EBattleTeam::Player, 1, InitError))) return false;
+    Board->BattleUnits.Add(Elementalist, ElementalActor);
+    ETransactionResult ElementalResult = ETransactionResult::Unavailable;
+    FGuid ChoiceId;
+    FUnitPosition ChoiceTile;
+    EElementalForm PreviousForm = EElementalForm::Unselected;
+    int32 ChoiceRevision = 0;
+    TestTrue(TEXT("Controller can route a registered actor by identity"), Transactions->TryMoveRegisteredElementalist(ElementalActor, Front, ElementalResult));
+    TestEqual(TEXT("Elementalist drop starts choice"), ElementalResult, ETransactionResult::FormChoiceRequired);
+    TestEqual(TEXT("Waiting for form does not occupy the tile"), Roster->GetPosition(Elementalist).Location, EUnitLocation::Bench);
+    TestTrue(TEXT("Pick a form for the correct unit and tile"),
+        Transactions->GetPendingElementalPlacement(ChoiceId, ChoiceTile, PreviousForm, ChoiceRevision)
+        && ChoiceId == Elementalist && ChoiceTile.Row == Front.Row && ChoiceTile.Column == Front.Column);
+    TestEqual(TEXT("Other units can take the target tile"), Transactions->RequestMove(Normal, Front), ETransactionResult::Success);
+    TestEqual(TEXT("Stale tile rejects form and placement"), Transactions->RequestElementalPlacement(EElementalForm::Fire, ChoiceRevision),
+        ETransactionResult::ChangeRejected);
+    FRosterUnit ElementalUnit;
+    Roster->GetUnit(Elementalist, ElementalUnit);
+    TestEqual(TEXT("Rejected deployment keeps the old form"), ElementalUnit.ElementalForm, EElementalForm::Unselected);
+
+    TestEqual(TEXT("Drop again on free tile"), Transactions->RequestMove(Elementalist, Second), ETransactionResult::FormChoiceRequired);
+    TestTrue(TEXT("Second choice available"), Transactions->GetPendingElementalPlacement(ChoiceId, ChoiceTile, PreviousForm, ChoiceRevision));
+    TestEqual(TEXT("Fire choice commits"), Transactions->RequestElementalPlacement(EElementalForm::Fire, ChoiceRevision), ETransactionResult::Success);
+    Roster->GetUnit(Elementalist, ElementalUnit);
+    TestEqual(TEXT("Form and deployed position commit together"), ElementalUnit.ElementalForm, EElementalForm::Fire);
+    TestEqual(TEXT("Selected form reaches the live battle actor"), ElementalActor->FinalStats.MaxMana, 100.f);
+    TestEqual(TEXT("The chosen tile is occupied"), Roster->GetPosition(Elementalist).Column, Second.Column);
+    TestEqual(TEXT("Board to board requires no form selection"), Transactions->RequestMove(Elementalist, Front), ETransactionResult::Success);
+    TestFalse(TEXT("No choice for an on-board move"), Transactions->GetPendingElementalPlacement(ChoiceId, ChoiceTile, PreviousForm, ChoiceRevision));
+    TestEqual(TEXT("Recall retains the form"), Transactions->RequestMoveToBench(Elementalist, 0), ETransactionResult::Success);
+    TestEqual(TEXT("Redeploy shows choice again"), Transactions->RequestMove(Elementalist, Front), ETransactionResult::FormChoiceRequired);
+    TestTrue(TEXT("Current selected form is returned"),
+        Transactions->GetPendingElementalPlacement(ChoiceId, ChoiceTile, PreviousForm, ChoiceRevision) && PreviousForm == EElementalForm::Fire);
+    Transactions->CancelElementalPlacement();
+    TestFalse(TEXT("Cancel closes the choice"), Transactions->GetPendingElementalPlacement(ChoiceId, ChoiceTile, PreviousForm, ChoiceRevision));
+    TestEqual(TEXT("Cancel leaves the unit on bench"), Roster->GetPosition(Elementalist).Location, EUnitLocation::Bench);
     return true;
 }
 #endif

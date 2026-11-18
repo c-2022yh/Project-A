@@ -25,7 +25,7 @@ public:
     bool IsOverButton(FVector2D ViewportPosition) const;
 
 private:
-    enum class EAction : uint8 { Buy, Reroll, Lock, Equip, Unequip, Sell, Reward, InventoryPage };
+    enum class EAction : uint8 { Buy, Reroll, Lock, Equip, Unequip, Sell, Reward, InventoryPage, ElementalForm, CancelElementalForm };
 
     struct FButton
     {
@@ -54,6 +54,7 @@ private:
     void ClearBindings();
     void Draw(AHUD* HUD, UCanvas* Canvas);
     void DrawShop(AHUD& HUD, const AShopManager& Manager);
+    void DrawElementalPlacement(AHUD& HUD, const FUnitPosition& Destination, EElementalForm PreviousForm, int32 Revision);
     void DrawItemsAndUnitActions(AHUD& HUD, const AShopTransactionManager& Manager);
     void DrawRewards(AHUD& HUD, const AShopTransactionManager& Manager);
     void DrawProfile(AHUD& HUD, const AShopTransactionManager& Manager, FGuid Id, FVector2D Position);

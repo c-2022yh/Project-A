@@ -25,6 +25,16 @@ public:
     virtual UWorld* GetWorld() const override;
     // 개별 스킬의 전용 BP 항목을 공통 시전 설정으로 변환한다. 초기화 때 한 번 호출한다.
     virtual FUnitSkillDefinition BuildSettings() const;
+    virtual bool RequiresLivingCastTarget() const { return true; }
+    virtual void PrepareCast(ABattleUnitBase* Target, int32 ActionId) {}
+    virtual void BeginCast(int32 ActionId) {}
+    virtual void ModifyMaxMana(float& MaxMana) const {}
+    virtual void CustomizeEffectValues(TArray<float>& Values) const {}
+    // 기본 공격 설정은 공격 시작에 한 번만 읽고, 발사 변경은 유효한 발사 직전에 적용한다.
+    virtual void ConfigureMeleeCombo(float AttackDamage, float AbilityPower, float& FirstRawDamage,
+        float& FollowupRawDamage, float& FollowupTimeRatio, bool& bFollowupUsesNotify) const {}
+    virtual void ModifyBasicAttackRelease(float AttackDamage, float CriticalMultiplier, FUnitDamageRequest& Damage) const {}
+    virtual void OnBasicAttackReleased() {}
     // 공통 피해 처리에서 인정한 처치 관여. 사망 이벤트 전의 기록 갱신 전용 native 알림이다.
     // 여기서 피해/전투 종료를 실행하지 않고 스킬 고유 성장 기록만 갱신한다.
     virtual void OnKillParticipation(ABattleUnitBase* DefeatedUnit);

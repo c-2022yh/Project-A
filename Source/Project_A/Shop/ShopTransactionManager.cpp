@@ -2,6 +2,21 @@
 #include "BenchManager.h"
 #include "RosterManager.h"
 #include "ShopManager.h"
+#include "../BattleUnitBase.h"
+#include "../Skills/ElementalistSkill.h"
+
+namespace
+{
+UElementalistSkill* FindElementalistSkill(UObject* Placement, FGuid UnitId)
+{
+    if (!IsValid(Placement)) return nullptr;
+    ABattleUnitBase* Actor = IUnitPlacement::Execute_GetBattleUnit(Placement, UnitId);
+    if (!IsValid(Actor)) return nullptr;
+    for (UUnitSkillBase* Skill : Actor->GetEquippedSkills())
+        if (auto* Elementalist = Cast<UElementalistSkill>(Skill)) return Elementalist;
+    return nullptr;
+}
+}
 
 bool AShopTransactionManager::IsConfigured() const
 {
@@ -23,6 +38,14 @@ bool AShopTransactionManager::ApplyChanges(TArray<FRosterUnitChange>& Changes, A
     if (!Roster->Apply(Changes, Phase, Limit)) return false;
     Roster->Commit(Changes);
     Items->Commit(MoveTemp(ItemState));
+    for (const FRosterUnitChange& Change : Changes)
+    {
+        if (Change.Edit == ERosterUnitEdit::Remove || Change.Unit.ElementalForm == EElementalForm::Unselected) continue;
+        if (UElementalistSkill* Skill = FindElementalistSkill(Roster->Placement.GetObject(), Change.Unit.Id);
+            Skill && IsValid(Skill->OwnerUnit) && Skill->OwnerUnit->UnitID == Change.Unit.UnitId
+                && Skill->OwnerUnit->GetWorld() == GetWorld())
+            Skill->SetForm(Change.Unit.ElementalForm);
+    }
     return true;
 }
 
@@ -264,6 +287,68 @@ ETransactionResult AShopTransactionManager::RequestMoveToBench(FGuid UnitId, int
 
 ETransactionResult AShopTransactionManager::RequestMove(FGuid UnitId, FUnitPosition Destination)
 {
+    return RequestMoveInternal(UnitId, Destination, nullptr, EElementalForm::Unselected);
+}
+
+bool AShopTransactionManager::TryMoveRegisteredElementalist(ABattleUnitBase* Unit, FUnitPosition Destination,
+    ETransactionResult& Result)
+{
+    if (!IsConfigured() || !IsValid(Unit) || Unit->GetWorld() != GetWorld()) return false;
+    const bool bElementalist = Unit->GetEquippedSkills().ContainsByPredicate(
+        [](const UUnitSkillBase* Skill) { return Cast<UElementalistSkill>(Skill) != nullptr; });
+    if (!bElementalist) return false;
+
+    for (const FRosterUnit& Entry : Roster->Units)
+    {
+        if (Entry.UnitId != Unit->UnitID || IUnitPlacement::Execute_GetBattleUnit(Roster->Placement.GetObject(), Entry.Id) != Unit) continue;
+        const FGuid Id = Entry.Id;
+        Result = RequestMove(Id, Destination);
+        return true;
+    }
+    return false;
+}
+
+bool AShopTransactionManager::IsElementalist(const FRosterUnit& Unit) const
+{
+    return Unit.ElementalForm != EElementalForm::Unselected || (!ElementalistUnitId.IsNone() && Unit.UnitId == ElementalistUnitId)
+        || FindElementalistSkill(Roster->Placement.GetObject(), Unit.Id);
+}
+
+bool AShopTransactionManager::GetPendingElementalPlacement(FGuid& UnitId, FUnitPosition& Destination,
+    EElementalForm& PreviousForm, int32& Revision) const
+{
+    if (!IsConfigured() || !PendingElementalPlacement.IsSet() || Shop->GetPhase() != EShopPhase::Preparation
+        || Shop->GetRound() != PendingElementalPlacement->Round) return false;
+    FRosterUnit Unit;
+    if (!Roster->GetUnit(PendingElementalPlacement->UnitId, Unit)) return false;
+    UnitId = PendingElementalPlacement->UnitId;
+    Destination = PendingElementalPlacement->Destination;
+    PreviousForm = Unit.ElementalForm;
+    Revision = PendingElementalPlacement->Revision;
+    return true;
+}
+
+ETransactionResult AShopTransactionManager::RequestElementalPlacement(EElementalForm Form, int32 Revision)
+{
+    if (!IsConfigured() || Shop->bChanging) return ETransactionResult::Unavailable;
+    if (Shop->GetPhase() != EShopPhase::Preparation) return ETransactionResult::WrongPhase;
+    if (!PendingElementalPlacement.IsSet() || PendingElementalPlacement->Round != Shop->GetRound()
+        || PendingElementalPlacement->Revision != Revision
+        || (Form != EElementalForm::Frost && Form != EElementalForm::Fire)) return ETransactionResult::InvalidSelection;
+
+    const FPendingElementalPlacement Choice = PendingElementalPlacement.GetValue();
+    PendingElementalPlacement.Reset();
+    return RequestMoveInternal(Choice.UnitId, Choice.Destination, &Choice, Form);
+}
+
+void AShopTransactionManager::CancelElementalPlacement()
+{
+    if (IsValid(Shop) && !Shop->bChanging) PendingElementalPlacement.Reset();
+}
+
+ETransactionResult AShopTransactionManager::RequestMoveInternal(FGuid UnitId, FUnitPosition Destination,
+    const FPendingElementalPlacement* Confirmed, EElementalForm Form)
+{
     if (!IsConfigured() || Shop->bChanging) return ETransactionResult::Unavailable;
     if (!Shop->CanTrade() && !Shop->CanManageBoard()) return ETransactionResult::WrongPhase;
     if (!Roster->IsPositionValid(Destination)) return ETransactionResult::InvalidSelection;
@@ -272,6 +357,21 @@ ETransactionResult AShopTransactionManager::RequestMove(FGuid UnitId, FUnitPosit
     FRosterUnit Unit;
     const FUnitPosition Source = Roster->GetPosition(UnitId);
     if (!Roster->GetUnit(UnitId, Unit) || !Roster->IsPositionValid(Source)) return ETransactionResult::InvalidSelection;
+    const FGuid OccupantId = Roster->FindOccupant(Destination);
+    const bool bElementalDeployment = Source.Location == EUnitLocation::Bench
+        && Destination.Location == EUnitLocation::Board && IsElementalist(Unit);
+    if (Confirmed)
+    {
+        if (!bElementalDeployment || Source.Column != Confirmed->Source.Column || OccupantId.IsValid())
+            return ETransactionResult::ChangeRejected;
+        Unit.ElementalForm = Form;
+    }
+    else if (bElementalDeployment && Shop->GetPhase() == EShopPhase::Preparation)
+    {
+        if (OccupantId.IsValid()) return ETransactionResult::NoSpace;
+        PendingElementalPlacement = FPendingElementalPlacement{UnitId, Source, Destination, Shop->GetRound(), ++ElementalPlacementRevision};
+        return ETransactionResult::FormChoiceRequired;
+    }
     if (Shop->GetPhase() == EShopPhase::Combat
         && (Source.Location != EUnitLocation::Bench || Destination.Location != EUnitLocation::Bench))
         return ETransactionResult::WrongPhase;
@@ -287,11 +387,12 @@ ETransactionResult AShopTransactionManager::RequestMove(FGuid UnitId, FUnitPosit
         Changes.Add(Roster->MakeChange(ERosterUnitEdit::Move, CurrentUnit, Target));
     };
 
-    const FGuid OccupantId = Roster->FindOccupant(Destination);
     if (OccupantId.IsValid())
     {
         FRosterUnit Occupant;
         if (!Roster->GetUnit(OccupantId, Occupant)) return ETransactionResult::ChangeRejected;
+        if (Shop->GetPhase() == EShopPhase::Preparation && Source.Location == EUnitLocation::Board
+            && Destination.Location == EUnitLocation::Bench && IsElementalist(Occupant)) return ETransactionResult::ChangeRejected;
         AddMove(Occupant, Source);
     }
     AddMove(Unit, Destination);
@@ -299,6 +400,7 @@ ETransactionResult AShopTransactionManager::RequestMove(FGuid UnitId, FUnitPosit
         return ETransactionResult::ChangeRejected;
 
     Roster->NotifyChanged();
+    if (PendingElementalPlacement.IsSet() && PendingElementalPlacement->UnitId == UnitId) PendingElementalPlacement.Reset();
     return ETransactionResult::Success;
 }
 

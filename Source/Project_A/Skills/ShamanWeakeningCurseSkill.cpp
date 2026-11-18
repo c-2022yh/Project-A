@@ -27,7 +27,7 @@ ABattleUnitBase* UShamanWeakeningCurseSkill::SelectTarget_Implementation() const
     int32 BestDistance = MAX_int32;
     float BestRemaining = MAX_flt;
     ABattleUnitBase* Current = OwnerUnit->CurrentTarget;
-    if (OwnerUnit->IsEnemyTarget(Current))
+    if (OwnerUnit->IsEnemyAttackTarget(Current))
     {
         const int32 Distance = ABattleUnitBase::HexDistance(OwnerUnit->CurrentTile, Current->CurrentTile);
         if (Distance <= Settings.CastRange && Current->GetPeriodicDamageRemaining(CurseId) < 0.f) return Current;
@@ -35,7 +35,7 @@ ABattleUnitBase* UShamanWeakeningCurseSkill::SelectTarget_Implementation() const
 
     for (ABattleUnitBase* Enemy : OwnerUnit->GetCombatRoster())
     {
-        if (!OwnerUnit->IsEnemyTarget(Enemy)) continue;
+        if (!OwnerUnit->IsEnemyAttackTarget(Enemy)) continue;
         const int32 Distance = ABattleUnitBase::HexDistance(OwnerUnit->CurrentTile, Enemy->CurrentTile);
         if (Distance > Settings.CastRange) continue;
 

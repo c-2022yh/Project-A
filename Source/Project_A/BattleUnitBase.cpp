@@ -132,7 +132,8 @@ bool ABattleUnitBase::InitializeUnit(FDataTableRowHandle Data, EBattleTeam Team,
     bInitialized = true; bIsDead = false; bCombatStartedForRound = false;
     Upgrades.Empty(); PermanentGrowth = FUnitStatModifier(); GrowthThisCombat.Empty();
     ActiveModifiers.Empty(); Shields.Empty(); AttackEnhancements.Empty(); AppliedDamage.Empty(); DamageContributors.Empty();
-    PeriodicDamage.Reset();
+    PeriodicEffects.Reset();
+    PendingTileImpacts.Reset();
     for (UUnitSkillBase* Old : SkillInstances) { Old->ResetRuntime(); Old->OwnerUnit = nullptr; }
     SkillInstances = MoveTemp(NewSkills);
     for (UUnitSkillBase* Instance : SkillInstances) { Instance->OwnerUnit = this; Instance->ResetRuntime(); }
@@ -188,11 +189,18 @@ void ABattleUnitBase::RecalculateStats()
     Add(PermanentGrowth);
     for (const auto& Pair : Upgrades) Add(Pair.Value);
     for (const FUnitTimedModifier& Effect : ActiveModifiers) Add(Effect.Modifier);
-    for (const auto& Entry : PeriodicDamage)
+    float PeriodicAttackDamageBonus = 0.f;
+    PeriodicAbilityPowerBonus = 0.f;
+    for (const auto& Entry : PeriodicEffects)
+    {
         MRReduction = FMath::Max(MRReduction, Entry.Value.MagicResistanceReduction);
+        PeriodicAttackDamageBonus += Entry.Value.AttackDamageBonus;
+        PeriodicAbilityPowerBonus += Entry.Value.AbilityPowerBonus;
+    }
     FinalStats.MaxHealth = FMath::Max(1.f, Safe(FinalStats.MaxHealth, 1.f));
-    FinalStats.AttackDamage = Positive(FinalStats.AttackDamage) * (1.f - ADReduction);
-    FinalStats.AbilityPower = Positive(FinalStats.AbilityPower) * (1.f - APReduction);
+    FinalStats.AttackDamage = Positive(FinalStats.AttackDamage) * (1.f - ADReduction) * (1.f + PeriodicAttackDamageBonus);
+    AbilityPowerBeforePeriodicBonuses = Positive(FinalStats.AbilityPower) * (1.f - APReduction);
+    FinalStats.AbilityPower = AbilityPowerBeforePeriodicBonuses * (1.f + PeriodicAbilityPowerBonus);
     FinalStats.Armor = Safe(FinalStats.Armor) * (1.f - ArmorReduction);
     FinalStats.MagicResistance = Safe(FinalStats.MagicResistance) * (1.f - MRReduction);
     AttackSpeedBonusBeforeSkills = SpeedBonus;
@@ -200,6 +208,7 @@ void ABattleUnitBase::RecalculateStats()
     FinalStats.MovementSpeed = Positive(FinalStats.MovementSpeed);
     FinalStats.CriticalChance = Fraction(FinalStats.CriticalChance);
     FinalStats.CriticalMultiplier = FMath::Max(1.f, Safe(FinalStats.CriticalMultiplier, 1.5f));
+    for (const UUnitSkillBase* Skill : SkillInstances) Skill->ModifyMaxMana(FinalStats.MaxMana);
     FinalStats.MaxMana = Positive(FinalStats.MaxMana);
     FinalStats.StartMana = FMath::Clamp(Positive(FinalStats.StartMana), 0.f, FinalStats.MaxMana);
     CurrentHP = bIsDead ? 0.f : FinalStats.MaxHealth * HealthRatio;
@@ -495,7 +504,7 @@ void ABattleUnitBase::StartCombat()
     bCombatStartedForRound = true; bInCombat = true; ++CombatGeneration;
     PreparationTransform = GetActorTransform(); PreparationTile = CurrentTile; PreparationPlacement = Placement;
     ActiveModifiers.Empty(); Shields.Empty(); AttackEnhancements.Empty(); AppliedDamage.Empty(); DamageContributors.Empty(); GrowthThisCombat.Empty();
-    PeriodicDamage.Reset();
+    PeriodicEffects.Reset();
     for (UUnitSkillBase* Instance : SkillInstances) Instance->ResetRuntime();
     BasicAttackCount = BasicHitCount = 0; AttackCooldown = RetargetTimer = BlockedSeconds = 0.f;
     UnreachableTargets.Empty(); CurrentTarget = nullptr;
@@ -517,10 +526,11 @@ void ABattleUnitBase::StopCombat()
         if (IsValid(BoardManager)) BoardManager->ReleaseUnitTiles(this);
         else if (IsValid(CurrentTile) && CurrentTile->OccupiedUnit == this) CurrentTile->ClearTile();
     }
+    PendingTileImpacts.Reset();
     TArray<FPendingProjectile> Removed = MoveTemp(Projectiles);
     for (const FPendingProjectile& Shot : Removed) ProjectileRemoved(Shot.Id, false);
     ActiveModifiers.Empty(); Shields.Empty(); AttackEnhancements.Empty();
-    PeriodicDamage.Reset();
+    PeriodicEffects.Reset();
     OvertimeAttackSpeed = 0.f; OvertimeDamageMultiplier = 1.f;
     for (UUnitSkillBase* Instance : SkillInstances) Instance->ResetRuntime();
     BasicAttackCount = BasicHitCount = 0; AttackCooldown = 0.f;
@@ -605,9 +615,9 @@ void ABattleUnitBase::Die()
     bIsDead = true; CurrentHP = 0.f;
     // 외부 사망 콜백이 라운드를 종료하기 전에 관여 기록을 한 번 확정한다.
     NotifyKillParticipants();
-    if (!PeriodicDamage.IsEmpty())
+    if (!PeriodicEffects.IsEmpty())
     {
-        PeriodicDamage.Reset();
+        PeriodicEffects.Reset();
         RecalculateStats();
     }
     AttackEnhancements.RemoveAll([](const FAttackEnhancement& E) { return E.bConsumeOnHit; });
@@ -726,14 +736,14 @@ bool ABattleUnitBase::RemoveEffect(FName EffectId)
     const int32 Removed = ActiveModifiers.RemoveAll([&](const FUnitTimedModifier& E) { return E.EffectId == EffectId || E.EffectId == StunPart; })
         + Shields.RemoveAll([&](const FUnitShield& S) { return S.EffectId == EffectId; })
         + AttackEnhancements.RemoveAll([&](const FAttackEnhancement& E) { return E.Id == EffectId; })
-        + PeriodicDamage.Remove(EffectId);
+        + PeriodicEffects.Remove(EffectId);
     if (Removed == 0) return false;
     RefreshShieldTotal(); RecalculateStats(); return true;
 }
 
 float ABattleUnitBase::GetPeriodicDamageRemaining(FName EffectId) const
 {
-    const FPeriodicDamage* Effect = PeriodicDamage.Find(EffectId);
+    const FPeriodicEffect* Effect = PeriodicEffects.Find(EffectId);
     return Effect ? float(FMath::Max(0.0, Effect->RemainingSeconds)) : -1.f;
 }
 
@@ -744,17 +754,18 @@ bool ABattleUnitBase::ApplyPeriodicMagicDamage(FName EffectId, ABattleUnitBase* 
         || !Source->IsEnemyTarget(this) || EffectId.IsNone()
         || !FMath::IsFinite(SecondsPerTick) || SecondsPerTick <= 0.f || TickCount <= 0) return false;
 
-    FPeriodicDamage& Effect = PeriodicDamage.FindOrAdd(EffectId);
+    FPeriodicEffect& Effect = PeriodicEffects.FindOrAdd(EffectId);
     const bool bRefresh = Effect.Revision != 0;
+    if (bRefresh && Effect.bHealing) return false;
     const float Reduction = Fraction(MagicResistanceReduction);
     const bool bStatsChanged = Effect.MagicResistanceReduction != Reduction;
     // 같은 ID는 다음 피해까지 남은 시간을 보존하고, 새 시전의 수치와 소유자만 이어받는다.
     Effect.TimeUntilTick = bRefresh ? FMath::Max(0.0, Effect.TimeUntilTick) : SecondsPerTick;
-    Effect.Revision = ++PeriodicDamageRevision;
+    Effect.Revision = ++PeriodicEffectRevision;
     Effect.Source = Source;
     Effect.SourceGeneration = Source->CombatGeneration;
     Effect.ActionId = ActionId;
-    Effect.DamagePerTick = Positive(DamagePerTick);
+    Effect.AmountPerTick = Positive(DamagePerTick);
     Effect.OffenseMultiplier = Source->MakeDamage(0.f, EUnitDamageType::Magical,
         EUnitDamageSource::DamageOverTime, EffectId, ActionId, false).OffenseMultiplier;
     Effect.MagicResistanceReduction = Reduction;
@@ -762,6 +773,44 @@ bool ABattleUnitBase::ApplyPeriodicMagicDamage(FName EffectId, ABattleUnitBase* 
     Effect.RemainingSeconds = Effect.Interval * TickCount;
     if (bStatsChanged) RecalculateStats();
     return true;
+}
+
+bool ABattleUnitBase::ApplyPeriodicHealing(FName EffectId, ABattleUnitBase* Source, float HealingPerTick,
+    int32 TickCount, float AttackDamageBonus, float AbilityPowerBonus)
+{
+    if (!bInCombat || !IsAlive() || !IsValid(Source) || !Source->bInCombat || !Source->IsAlive()
+        || Source->TeamType != TeamType || Source->GetWorld() != GetWorld() || EffectId.IsNone() || TickCount <= 0) return false;
+
+    FPeriodicEffect& Effect = PeriodicEffects.FindOrAdd(EffectId);
+    const bool bRefresh = Effect.Revision != 0;
+    if (bRefresh && !Effect.bHealing) return false;
+    const float Healing = Positive(HealingPerTick);
+    // 같은 축복은 가장 큰 회복량을 유지하고 다음 회복까지의 시간은 보존한다.
+    if (!bRefresh || Healing >= Effect.AmountPerTick)
+    {
+        Effect.Source = Source;
+        Effect.SourceGeneration = Source->CombatGeneration;
+        Effect.AmountPerTick = Healing;
+    }
+    const float NewADBonus = FMath::Max(Effect.AttackDamageBonus, Positive(AttackDamageBonus));
+    const float NewAPBonus = FMath::Max(Effect.AbilityPowerBonus, Positive(AbilityPowerBonus));
+    const bool bStatsChanged = NewADBonus != Effect.AttackDamageBonus || NewAPBonus != Effect.AbilityPowerBonus;
+    Effect.AttackDamageBonus = NewADBonus;
+    Effect.AbilityPowerBonus = NewAPBonus;
+    Effect.bHealing = true;
+    Effect.TimeUntilTick = bRefresh ? FMath::Max(0.0, Effect.TimeUntilTick) : 1.0;
+    Effect.Revision = ++PeriodicEffectRevision;
+    Effect.Interval = 1.0;
+    Effect.RemainingSeconds = TickCount;
+    if (bStatsChanged) RecalculateStats();
+    return true;
+}
+
+float ABattleUnitBase::GetAbilityPowerWithoutPeriodicEffect(FName EffectId) const
+{
+    const FPeriodicEffect* Effect = PeriodicEffects.Find(EffectId);
+    const float ExcludedBonus = Effect ? Effect->AbilityPowerBonus : 0.f;
+    return AbilityPowerBeforePeriodicBonuses * (1.f + PeriodicAbilityPowerBonus - ExcludedBonus);
 }
 float ABattleUnitBase::GainMana(float Amount)
 {
@@ -973,16 +1022,16 @@ void ABattleUnitBase::TickEffects(float Delta)
     if (bShieldsChanged) RefreshShieldTotal();
 }
 
-void ABattleUnitBase::TickPeriodicDamage(float Delta)
+void ABattleUnitBase::TickPeriodicEffects(float Delta)
 {
-    if (PeriodicDamage.IsEmpty()) return;
+    if (PeriodicEffects.IsEmpty()) return;
     TArray<FName> EffectIds;
-    PeriodicDamage.GenerateKeyArray(EffectIds);
+    PeriodicEffects.GenerateKeyArray(EffectIds);
     const int32 Generation = CombatGeneration;
     for (FName EffectId : EffectIds)
     {
         if (CombatGeneration != Generation || !bInCombat || !IsAlive()) return;
-        FPeriodicDamage* Effect = PeriodicDamage.Find(EffectId);
+        FPeriodicEffect* Effect = PeriodicEffects.Find(EffectId);
         if (!Effect) continue;
 
         const uint32 Revision = Effect->Revision;
@@ -997,22 +1046,89 @@ void ABattleUnitBase::TickPeriodicDamage(float Delta)
             if (Source && Source->bInCombat && Source->CombatGeneration == Effect->SourceGeneration)
                 Request.Attacker = Source;
             Request.Victim = this;
-            Request.RawDamage = Effect->DamagePerTick;
+            Request.RawDamage = Effect->AmountPerTick;
             Request.OffenseMultiplier = Effect->OffenseMultiplier;
             Request.ActionId = Effect->ActionId;
             Request.SkillId = EffectId;
             Request.Type = EUnitDamageType::Magical;
             Request.Source = EUnitDamageSource::DamageOverTime;
-            ReceiveDamage(Request);
+            if (Effect->bHealing) ReceiveHealing(Effect->AmountPerTick, Request.Attacker);
+            else ReceiveDamage(Request);
             if (CombatGeneration != Generation || !bInCombat || !IsAlive()) return;
             // 피해 콜백에서 상태를 제거하거나 갱신할 수 있으므로 이전 포인터를 다시 쓰지 않는다.
-            Effect = PeriodicDamage.Find(EffectId);
+            Effect = PeriodicEffects.Find(EffectId);
         }
         if (Effect && Effect->Revision == Revision && Effect->RemainingSeconds <= 0.0)
         {
-            const bool bStatsChanged = Effect->MagicResistanceReduction > 0.f;
-            PeriodicDamage.Remove(EffectId);
+            const bool bStatsChanged = Effect->MagicResistanceReduction > 0.f
+                || Effect->AttackDamageBonus > 0.f || Effect->AbilityPowerBonus > 0.f;
+            PeriodicEffects.Remove(EffectId);
             if (bStatsChanged) RecalculateStats();
+        }
+    }
+}
+
+bool ABattleUnitBase::QueueTileImpact(UUnitSkillBase* Skill, const TArray<ABoardTile*>& Tiles, float Delay, int32 ActionId,
+    const TArray<float>& DamageScales)
+{
+    if (!bInCombat || !IsAlive() || ActionState != EUnitActionState::Casting || ActiveActionId != ActionId
+        || !SkillInstances.IsValidIndex(ActiveSkillIndex) || SkillInstances[ActiveSkillIndex] != Skill) return false;
+
+    FPendingTileImpact Impact;
+    if (!DamageScales.IsEmpty() && DamageScales.Num() != Tiles.Num()) return false;
+    for (int32 Index = 0; Index < Tiles.Num(); ++Index)
+    {
+        ABoardTile* Tile = Tiles[Index];
+        if (!IsValid(Tile) || Tile->OwningBoard != BoardManager || Impact.Tiles.Contains(Tile)) continue;
+        Impact.Tiles.Add(Tile);
+        Impact.DamageScales.Add(DamageScales.IsEmpty() ? 1.f : Positive(DamageScales[Index]));
+    }
+    if (Impact.Tiles.IsEmpty()) return false;
+
+    Impact.Skill = Skill;
+    Impact.Config = Skill->Settings;
+    Impact.Values = CalculateEffectValues(Impact.Config);
+    Skill->CustomizeEffectValues(Impact.Values);
+    Impact.Context = MakeDamage(0.f, EUnitDamageType::Physical, EUnitDamageSource::Skill,
+        Impact.Config.SkillId, ActionId, false);
+    Impact.Remaining = FMath::Max(0.01f, Positive(Delay));
+    PendingTileImpacts.Add(MoveTemp(Impact));
+    return true;
+}
+
+void ABattleUnitBase::TickTileImpacts(float Delta)
+{
+    if (!bInCombat || PendingTileImpacts.IsEmpty()) return;
+    TArray<FPendingTileImpact> Pending = MoveTemp(PendingTileImpacts);
+    const int32 Generation = CombatGeneration;
+    for (FPendingTileImpact& Impact : Pending)
+    {
+        if (!bInCombat || CombatGeneration != Generation) return;
+        Impact.Remaining -= Delta;
+        if (Impact.Remaining > UE_SMALL_NUMBER)
+        {
+            PendingTileImpacts.Add(MoveTemp(Impact));
+            continue;
+        }
+
+        TArray<TPair<TWeakObjectPtr<ABattleUnitBase>, float>> Targets;
+        for (int32 Index = 0; Index < Impact.Tiles.Num(); ++Index)
+        {
+            const TWeakObjectPtr<ABoardTile>& Tile = Impact.Tiles[Index];
+            if (!Tile.IsValid()) continue;
+            ABattleUnitBase* Unit = Cast<ABattleUnitBase>(Tile->OccupiedUnit);
+            if (IsEnemyTarget(Unit) && Unit->CurrentTile == Tile.Get()) Targets.Emplace(Unit, Impact.DamageScales[Index]);
+        }
+        for (const auto& Target : Targets)
+        {
+            if (!bInCombat || CombatGeneration != Generation) return;
+            if (UUnitSkillBase* Skill = Impact.Skill.Get(); Skill && IsEnemyTarget(Target.Key.Get()))
+            {
+                TArray<float> Values = Impact.Values;
+                for (int32 Index = 0; Index < Values.Num(); ++Index)
+                    if (Impact.Config.Effects[Index].Kind == EUnitEffectKind::Damage) Values[Index] *= Target.Value;
+                Skill->ApplyImpact(Impact.Config, Target.Key.Get(), Values, Impact.Context);
+            }
         }
     }
 }
@@ -1024,6 +1140,7 @@ void ABattleUnitBase::Tick(float DeltaSeconds)
     TickDeathVisual(DeltaSeconds);
     if (!bInCombat) return;
     TickProjectiles(DeltaSeconds);
+    TickTileImpacts(DeltaSeconds);
     if (!bInCombat || !IsAlive()) return;
     if (bCombatStartPending)
     {
@@ -1033,7 +1150,7 @@ void ABattleUnitBase::Tick(float DeltaSeconds)
     }
     TickEffects(DeltaSeconds);
     if (!bInCombat || !IsAlive()) return;
-    TickPeriodicDamage(DeltaSeconds);
+    TickPeriodicEffects(DeltaSeconds);
     if (!bInCombat || !IsAlive()) return;
     AttackCooldown = FMath::Max(0.f, AttackCooldown - DeltaSeconds);
     TickAction(DeltaSeconds);
@@ -1044,6 +1161,23 @@ bool ABattleUnitBase::IsEnemyTarget(const ABattleUnitBase* Target) const
 {
     return IsValid(Target) && Target != this && Target->TeamType != TeamType && Target->IsAlive() && Target->bInCombat
         && Target->Placement == EUnitPlacement::Board && IsValid(Target->CurrentTile);
+}
+
+bool ABattleUnitBase::IsEnemyAttackTarget(const ABattleUnitBase* Target) const
+{
+    return IsEnemyTarget(Target) && !Target->IsCombatStealthed();
+}
+
+bool ABattleUnitBase::IsCombatStealthed() const
+{
+    return bInCombat && IsAlive() && ActionState == EUnitActionState::Casting
+        && !bActionCommitted && StealthActionId > 0 && StealthActionId == ActiveActionId;
+}
+
+void ABattleUnitBase::BeginCastStealth(int32 ActionId)
+{
+    if (bInCombat && IsAlive() && ActionId > 0 && ActiveActionId == ActionId)
+        StealthActionId = ActionId;
 }
 bool ABattleUnitBase::IsInRange(const ABattleUnitBase* Target, int32 Range) const
 {
@@ -1058,7 +1192,7 @@ void ABattleUnitBase::FindTarget()
     for (int32 Index = 0; Index < CombatRoster.Num(); ++Index)
     {
         ABattleUnitBase* Unit = CombatRoster[Index];
-        if (!IsEnemyTarget(Unit) || UnreachableTargets.Contains(Index)) continue;
+        if (!IsEnemyAttackTarget(Unit) || UnreachableTargets.Contains(Index)) continue;
         const int32 Distance = HexDistance(CurrentTile, Unit->CurrentTile);
         if (Distance < BestDistance) { BestDistance = Distance; CurrentTarget = Unit; }
     }
@@ -1073,7 +1207,7 @@ void ABattleUnitBase::Think(float Delta)
 {
     if (IsStunned() || ActionState != EUnitActionState::Idle) return;
     RetargetTimer -= Delta;
-    if (!IsEnemyTarget(CurrentTarget))
+    if (!IsEnemyAttackTarget(CurrentTarget))
     {
         CurrentTarget = nullptr;
         if (RetargetTimer > 0.f) return;
@@ -1081,7 +1215,7 @@ void ABattleUnitBase::Think(float Delta)
     }
     // 액티브는 현재 평타가 끝난 뒤 우선한다. 유효한 스킬 대상이 없으면 마나를 보존한다.
     if (TryCastSkill()) return;
-    if (!IsEnemyTarget(CurrentTarget)) { RetargetTimer = FMath::Max(0.05f, Positive(CombatPolicy.RetargetInterval)); return; }
+    if (!IsEnemyAttackTarget(CurrentTarget)) { RetargetTimer = FMath::Max(0.05f, Positive(CombatPolicy.RetargetInterval)); return; }
     if (IsInRange(CurrentTarget, FinalStats.AttackRange)) { BlockedSeconds = 0.f; TryBasicAttack(); return; }
     if (RetargetTimer > 0.f || FinalStats.MovementSpeed <= 0.f) return;
     const int32 MoveId = ++ActionSequence;
@@ -1129,11 +1263,13 @@ void ABattleUnitBase::Think(float Delta)
 bool ABattleUnitBase::TryBasicAttack()
 {
     if (!bInCombat || !IsAlive() || IsStunned() || ActionState != EUnitActionState::Idle || AttackCooldown > 0.f
-        || FinalStats.AttackSpeed <= 0.f || !IsEnemyTarget(CurrentTarget) || !IsInRange(CurrentTarget, FinalStats.AttackRange)) return false;
+        || FinalStats.AttackSpeed <= 0.f || !IsEnemyAttackTarget(CurrentTarget) || !IsInRange(CurrentTarget, FinalStats.AttackRange)) return false;
     // 이동 없이 공격하거나 타깃이 바뀌어도 모션/공격 시작 이벤트 전에 적을 바라본다.
     FaceLocation(*this, CurrentTarget->GetActorLocation());
     ActiveActionId = ++ActionSequence; ActiveSkillIndex = INDEX_NONE; ActionTarget = CurrentTarget;
     bActionCommitted = false; ActionElapsed = 0.f;
+    bHasFollowupAttack = bFollowupAttackCommitted = bMeleeHitReported = false;
+    bFollowupUsesNotify = false;
     AttackCooldown = 1.f / FMath::Max(0.01f, FinalStats.AttackSpeed);
     // 공속 감소는 대기 주기만 늘린다. 진행 중 모션은 시작 시 속도로 고정한다.
     const float MotionSpeed = AttackSlow < 1.f ? FinalStats.AttackSpeed / FMath::Max(0.01f, 1.f - AttackSlow) : FinalStats.AttackSpeed;
@@ -1146,8 +1282,24 @@ bool ABattleUnitBase::TryBasicAttack()
     if (!bInCombat || !IsAlive() || ActiveActionId != Id) return false;
     // 기본 공격은 물리 피해다. 구버전의 DamageType/bCanCrit 설정과 무관하게 공통 명세를 적용한다.
     ActiveAttackDamageStat = FinalStats.AttackDamage;
-    ActiveAttackDamage = MakeDamage(ActiveAttackDamageStat * Positive(Definition.BasicAttack.AttackDamageRatio) + Positive(Definition.BasicAttack.FlatDamage),
+    ActiveAttackCriticalMultiplier = FinalStats.CriticalMultiplier;
+    float FirstDamage = ActiveAttackDamageStat * Positive(Definition.BasicAttack.AttackDamageRatio) + Positive(Definition.BasicAttack.FlatDamage);
+    float FollowupDamage = 0.f;
+    FollowupAttackTimeRatio = 0.f;
+    if (Definition.BasicAttack.Delivery == EUnitAttackDelivery::Melee)
+        for (const UUnitSkillBase* Skill : SkillInstances)
+            Skill->ConfigureMeleeCombo(ActiveAttackDamageStat, FinalStats.AbilityPower, FirstDamage,
+                FollowupDamage, FollowupAttackTimeRatio, bFollowupUsesNotify);
+    ActiveAttackDamage = MakeDamage(FirstDamage,
         EUnitDamageType::Physical, EUnitDamageSource::BasicAttack, NAME_None, Id, true);
+    if (Positive(FollowupDamage) > 0.f)
+    {
+        bHasFollowupAttack = true;
+        FollowupAttackDamage = ActiveAttackDamage;
+        FollowupAttackDamage.RawDamage = FollowupDamage;
+        FollowupAttackDamage.Type = EUnitDamageType::Magical;
+        FollowupAttackDamage.DamageId = FGuid::NewGuid();
+    }
     if (Definition.Animations.AttackMontage)
         if (UAnimInstance* Anim = Body->GetAnimInstance())
             Anim->Montage_Play(Definition.Animations.AttackMontage, Definition.Animations.AttackMontage->GetPlayLength() / ActionDuration);
@@ -1178,21 +1330,47 @@ bool ABattleUnitBase::CommitAttackHit(int32 ActionId)
     // 기존 도적의 시간제 강화는 기존 방식대로 소비한다. 새 스킬 출처 강화만 명중까지 보존한다.
     AttackEnhancements.RemoveAll([](const FAttackEnhancement& E) { return !E.bConsumeOnHit; });
     const float BaseDamage = RatioOverride > 0.f ? ActiveAttackDamageStat * RatioOverride : Damage.RawDamage;
-    Damage.RawDamage = Positive(BaseDamage * (1.f + ExtraMultiplier) + ExtraFlat);
+    Damage.RawDamage = BaseDamage;
+    for (const UUnitSkillBase* Skill : SkillInstances)
+        Skill->ModifyBasicAttackRelease(ActiveAttackDamageStat, ActiveAttackCriticalMultiplier, Damage);
+    Damage.RawDamage = Positive(Damage.RawDamage * (1.f + ExtraMultiplier) + ExtraFlat);
     Damage.Victim = Target;
     if (Definition.BasicAttack.Delivery == EUnitAttackDelivery::Projectile)
     {
         FPendingProjectile Shot; Shot.bBasic = true; Shot.Target = Target; Shot.Damage = Damage;
         Shot.Speed = Definition.BasicAttack.ProjectileSpeed; Shot.Lifetime = Definition.BasicAttack.ProjectileMaxLifetime;
         Shot.Visual = Definition.BasicAttack.ProjectileVisual;
+        const int32 Generation = CombatGeneration;
         if (!LaunchProjectile(MoveTemp(Shot))) ReleaseArmedBasicAttack(ActionId);
+        else if (bInCombat && CombatGeneration == Generation)
+            for (UUnitSkillBase* Skill : SkillInstances) Skill->OnBasicAttackReleased();
     }
     else
     {
+        for (UUnitSkillBase* Skill : SkillInstances) Skill->OnBasicAttackReleased();
+        TGuardValue<bool> Guard(bMeleePrimaryResolving, true);
         const FUnitDamageResult Result = Target->ReceiveDamage(Damage);
+        if (ActiveActionId == ActionId) bMeleeHitReported = Result.bApplied;
         ReportBasicHit(Target, Damage, Result);
     }
     return true;
+}
+
+bool ABattleUnitBase::CommitFollowupAttackHit(int32 ActionId)
+{
+    if (!bInCombat || !IsAlive() || IsStunned() || ActionState != EUnitActionState::BasicAttack
+        || ActiveActionId != ActionId || ActionId <= 0 || !bActionCommitted || !bHasFollowupAttack
+        || bFollowupAttackCommitted || bMeleePrimaryResolving) return false;
+
+    bFollowupAttackCommitted = true;
+    ABattleUnitBase* Target = ActionTarget.Get();
+    if (!IsEnemyTarget(Target) || !IsInRange(Target, FinalStats.AttackRange)) return false;
+    FUnitDamageRequest Damage = FollowupAttackDamage;
+    Damage.Victim = Target;
+    const bool bWasReported = bMeleeHitReported;
+    const FUnitDamageResult Result = Target->ReceiveDamage(Damage);
+    if (!bWasReported) ReportBasicHit(Target, Damage, Result);
+    return Result.bApplied;
 }
 void ABattleUnitBase::ReportBasicHit(ABattleUnitBase* Target, const FUnitDamageRequest& Request, const FUnitDamageResult& Result)
 {
@@ -1236,6 +1414,8 @@ void ABattleUnitBase::TickAction(float Delta)
     if (ActionState == EUnitActionState::BasicAttack)
     {
         if (!Definition.BasicAttack.bUseAnimNotify && !bActionCommitted && ActionElapsed >= ActionDuration * Fraction(Definition.BasicAttack.HitTimeRatio)) CommitAttackHit(Id);
+        if (Id == ActiveActionId && bHasFollowupAttack && !bFollowupUsesNotify
+            && ActionElapsed >= ActionDuration * Fraction(FollowupAttackTimeRatio)) CommitFollowupAttackHit(Id);
         if (Id == ActiveActionId && ActionElapsed >= ActionDuration + Positive(CombatPolicy.NotifyTimeoutGraceSeconds))
         {
             if (!bActionCommitted) LastValidationMessage = TEXT("Attack Notify missing: action ended without dealing damage.");
@@ -1257,7 +1437,7 @@ void ABattleUnitBase::TickAction(float Delta)
 ABattleUnitBase* ABattleUnitBase::SelectSkillTarget(const FUnitSkillDefinition& Skill) const
 {
     if (Skill.Target == EUnitSkillTarget::Self) return IsAlive() ? const_cast<ABattleUnitBase*>(this) : nullptr;
-    if (Skill.Target == EUnitSkillTarget::CurrentEnemy) return IsEnemyTarget(CurrentTarget) && IsInRange(CurrentTarget, Skill.CastRange) ? CurrentTarget.Get() : nullptr;
+    if (Skill.Target == EUnitSkillTarget::CurrentEnemy) return IsEnemyAttackTarget(CurrentTarget) && IsInRange(CurrentTarget, Skill.CastRange) ? CurrentTarget.Get() : nullptr;
     ABattleUnitBase* Best = nullptr;
     float BestScore = MAX_flt;
     const auto Consider = [&](ABattleUnitBase* Unit)
@@ -1265,6 +1445,7 @@ ABattleUnitBase* ABattleUnitBase::SelectSkillTarget(const FUnitSkillDefinition& 
         if (!IsValid(Unit) || !Unit->IsAlive() || !Unit->bInCombat || Unit->Placement != EUnitPlacement::Board || !IsInRange(Unit, Skill.CastRange)) return;
         const bool bAlly = Unit->TeamType == TeamType;
         if ((Skill.Target == EUnitSkillTarget::LowestHealthAlly) != bAlly) return;
+        if (!bAlly && Unit->IsCombatStealthed()) return;
         const float Score = bAlly ? Unit->CurrentHP / Unit->FinalStats.MaxHealth : float(HexDistance(CurrentTile, Unit->CurrentTile));
         if (bAlly && Score >= 1.f) return;
         if (Score < BestScore) { Best = Unit; BestScore = Score; }
@@ -1294,11 +1475,15 @@ bool ABattleUnitBase::TryCastSkill()
     ActiveActionId = ++ActionSequence; ActiveSkillIndex = Chosen; ActionTarget = Target;
     ActionElapsed = 0.f; ActionDuration = FMath::Max(0.01f, Positive(Skill.CastSeconds)); bActionCommitted = false;
     PreCastMana = CurrentMana; CurrentMana = 0.f;
+    const int32 CastId = ActiveActionId;
+    SkillInstances[Chosen]->PrepareCast(Target, CastId);
     SkillInstances[Chosen]->Cooldown = Positive(Skill.InternalCooldown);
     ChangeAction(EUnitActionState::Casting);
+    if (ActiveActionId != CastId || !SkillInstances.IsValidIndex(Chosen)) return true;
+    SkillInstances[Chosen]->BeginCast(CastId);
+    if (ActiveActionId != CastId || !SkillInstances.IsValidIndex(Chosen)) return true;
     if (Skill.CastMontage)
         if (UAnimInstance* Anim = Body->GetAnimInstance()) Anim->Montage_Play(Skill.CastMontage, Skill.CastMontage->GetPlayLength() / ActionDuration);
-    const int32 CastId = ActiveActionId;
     SkillInstances[Chosen]->OnCastStarted(CastId);
     if (ActiveActionId == CastId) { OnManaChanged.Broadcast(this); OnSkillStarted.Broadcast(this, CastId); }
     return true;
@@ -1310,7 +1495,8 @@ bool ABattleUnitBase::CommitSkillEffect(int32 ActionId)
     bActionCommitted = true;
     ABattleUnitBase* Target = ActionTarget.Get();
     // 시전 대상이 사망해도 자동 이전하지 않는다. 일반 시전 불발은 마나 미환불이 임시 정책이다.
-    if (!IsValid(Target) || !Target->IsAlive() || !Target->bInCombat) return false;
+    if (SkillInstances[ActiveSkillIndex]->RequiresLivingCastTarget()
+        && (!IsValid(Target) || !Target->IsAlive() || !Target->bInCombat)) return false;
     ExecuteSkill(SkillInstances[ActiveSkillIndex]->Settings, Target, ActionId);
     return true;
 }
@@ -1339,7 +1525,8 @@ void ABattleUnitBase::ExecuteSkillPayload(UUnitSkillBase* Instance, ABattleUnitB
     const int32 Slot = SkillInstances.IndexOfByKey(Instance);
     if (!SkillInstances.IsValidIndex(Slot)) return;
     const FUnitSkillDefinition Skill = SkillInstances[Slot]->Settings;
-    const TArray<float> Values = CalculateEffectValues(Skill);
+    TArray<float> Values = CalculateEffectValues(Skill);
+    Instance->CustomizeEffectValues(Values);
     const FUnitDamageRequest Context = MakeDamage(0.f, EUnitDamageType::Magical,
         Skill.Trigger == EUnitTrigger::ManaFull ? EUnitDamageSource::Skill : EUnitDamageSource::Triggered, Skill.SkillId, ActionId, false);
     if (Skill.bProjectile && Target != this)
@@ -1385,7 +1572,7 @@ FUnitProjectileView ABattleUnitBase::MakeProjectileView(const FPendingProjectile
     View.Rotation = Projectile.Rotation;
     View.Target = Projectile.Target.Get();
     View.bBasicAttack = Projectile.bBasic;
-    View.SkillId = Projectile.bBasic ? NAME_None : Projectile.Skill.SkillId;
+    View.SkillId = Projectile.bBasic ? Projectile.Damage.SkillId : Projectile.Skill.SkillId;
     View.Visual = Projectile.Visual;
     return View;
 }
@@ -1452,6 +1639,12 @@ void ABattleUnitBase::TickProjectiles(float Delta)
 #include "Skills/ArmorShredSkill.h"
 #include "Skills/BerserkerRageSkill.h"
 #include "Skills/PriestHealingLightSkill.h"
+#include "Skills/ImperialBlessingSkill.h"
+#include "Skills/IronwallGuardSkill.h"
+#include "Skills/ThunderMageLightningSkill.h"
+#include "Skills/ElementalistSkill.h"
+#include "Skills/SpellbladeSkills.h"
+#include "Skills/SniperPrecisionShotSkill.h"
 #include "Skills/ShamanWeakeningCurseSkill.h"
 #include "Engine/StaticMesh.h"
 #include "Materials/Material.h"
@@ -1757,6 +1950,275 @@ bool FArmorShredOnHitTest::RunTest(const FString& Parameters)
     TestEqual(TEXT("Refreshed shred outlasts the earlier expiration"), Target->FinalStats.Armor, 70.f);
     Target->Tick(2.5f);
     TestEqual(TEXT("Armor returns to its prior value after four seconds"), Target->FinalStats.Armor, 100.f);
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FImperialBlessingTest, "ProjectA.Unit.ImperialBlessing.PeriodicHealingAndRefresh",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FImperialBlessingTest::RunTest(const FString& Parameters)
+{
+    using namespace UnitCombatTests;
+    FFixture F;
+    FTestUnitData Data;
+    Data.BaseStats.MaxHealth = 1000.f;
+    Data.BaseStats.AttackDamage = 100.f;
+    Data.BaseStats.AbilityPower = 100.f;
+    ABattleUnitBase* Ally = F.Spawn(TEXT("Ally"), Data, EBattleTeam::Player, 0);
+    ABattleUnitBase* Enemy = F.Spawn(TEXT("Enemy"), Data, EBattleTeam::Enemy, 1);
+    Data.SkillClasses = {UImperialBlessingSkill::StaticClass()};
+    ABattleUnitBase* Strong = F.Spawn(TEXT("Strong"), Data, EBattleTeam::Player, -1);
+    ABattleUnitBase* Weak = F.Spawn(TEXT("Weak"), Data, EBattleTeam::Player, -2);
+    if (!Ally || !Enemy || !Strong || !Weak) { AddError(TEXT("Could not spawn blessing test units")); return false; }
+    Strong->SetStarLevel(2);
+    for (ABattleUnitBase* Caster : {Strong, Weak}) Caster->SetCombatRoster({Ally, Enemy, Strong, Weak});
+    for (ABattleUnitBase* Unit : {Ally, Enemy, Strong, Weak}) Unit->StartCombat();
+
+    const auto Cast = [](ABattleUnitBase* Caster)
+    {
+        Caster->GainMana(Caster->FinalStats.MaxMana);
+        if (!Caster->TryCastSkill()) return false;
+        const int32 Id = Caster->ActiveActionId;
+        const bool bCommitted = Caster->CommitSkillEffect(Id);
+        Caster->FinishAction(Id);
+        return bCommitted;
+    };
+    if (!TestTrue(TEXT("Buff can cast when all allies are full"), Cast(Weak))) return false;
+    TestEqual(TEXT("Caster gains the AP buff"), Strong->FinalStats.AbilityPower, 110.f);
+    TestEqual(TEXT("Team AD buff is applied"), Ally->FinalStats.AttackDamage, 110.f);
+    TestEqual(TEXT("Enemy is not buffed"), Enemy->FinalStats.AttackDamage, 100.f);
+    Ally->CurrentHP = 600.f;
+    Ally->Tick(0.75f);
+    TestEqual(TEXT("No instant or early healing"), Ally->CurrentHP, 600.f);
+    if (!TestTrue(TEXT("Second caster refreshes existing blessing"), Cast(Strong))) return false;
+    Ally->Tick(0.25f);
+    TestEqual(TEXT("Existing tick cadence kept and blessing AP excluded"), Ally->CurrentHP, 645.f);
+    if (!TestTrue(TEXT("Weaker recast refreshes the blessing"), Cast(Weak))) return false;
+    TestEqual(TEXT("Same blessing never stacks stats"), Ally->FinalStats.AttackDamage, 110.f);
+
+    FUnitDamageRequest Fatal;
+    Fatal.RawDamage = 10000.f;
+    Fatal.Type = EUnitDamageType::TrueDamage;
+    TestTrue(TEXT("Strong caster dies"), Strong->ReceiveDamage(Fatal).bKilled);
+    Ally->Tick(4.f);
+    TestEqual(TEXT("Four refreshed ticks use stronger amount after caster dies"), Ally->CurrentHP, 825.f);
+    TestEqual(TEXT("Final healing tick is followed by AD removal"), Ally->FinalStats.AttackDamage, 100.f);
+    TestEqual(TEXT("AP restored on expiration"), Ally->FinalStats.AbilityPower, 100.f);
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FIronwallGuardTest, "ProjectA.Unit.IronwallGuard.ReductionAndRefresh",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FIronwallGuardTest::RunTest(const FString& Parameters)
+{
+    using namespace UnitCombatTests;
+    FFixture F;
+    FTestUnitData Data;
+    Data.BaseStats.MaxHealth = 1000.f;
+    Data.BaseStats.Armor = 100.f;
+    Data.SkillClasses = {UIronwallGuardSkill::StaticClass()};
+    ABattleUnitBase* Guard = F.Spawn(TEXT("Guard"), Data, EBattleTeam::Player, 0);
+    if (!TestNotNull(TEXT("Guard spawned"), Guard)) return false;
+    Guard->StartCombat();
+    const auto Cast = [Guard]
+    {
+        Guard->GainMana(Guard->FinalStats.MaxMana);
+        if (!Guard->TryCastSkill()) return false;
+        const int32 Id = Guard->ActiveActionId;
+        const bool bCommitted = Guard->CommitSkillEffect(Id);
+        Guard->FinishAction(Id);
+        return bCommitted;
+    };
+    const auto TakeHit = [Guard]
+    {
+        FUnitDamageRequest Request;
+        Request.RawDamage = 200.f;
+        Request.Type = EUnitDamageType::Physical;
+        return Guard->ReceiveDamage(Request).HealthDamage;
+    };
+    TestEqual(TEXT("Armor alone reduces hit to 100"), TakeHit(), 100.f);
+    if (!TestTrue(TEXT("Guard buff commits"), Cast())) return false;
+    TestTrue(TEXT("40 percent reduction multiplies damage after armor"), FMath::IsNearlyEqual(TakeHit(), 60.f, 0.001f));
+    Guard->Tick(3.f);
+    if (!TestTrue(TEXT("Guard refreshes"), Cast())) return false;
+    Guard->Tick(2.f);
+    TestTrue(TEXT("Second cast refreshes without stacking"), FMath::IsNearlyEqual(TakeHit(), 60.f, 0.001f));
+    Guard->Tick(2.f);
+    TestEqual(TEXT("Defense expires four seconds after recast"), TakeHit(), 100.f);
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FThunderMageLightningTest, "ProjectA.Unit.ThunderMageLightning.DamageAndStun",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FThunderMageLightningTest::RunTest(const FString& Parameters)
+{
+    using namespace UnitCombatTests;
+    for (const int32 Stars : {1, 2})
+    {
+        FFixture F;
+        FTestUnitData CasterData;
+        CasterData.BaseStats.AbilityPower = 200.f;
+        CasterData.BaseStats.CriticalChance = 1.f;
+        CasterData.SkillClasses = {UThunderMageLightningSkill::StaticClass()};
+        FTestUnitData EnemyData;
+        EnemyData.BaseStats.MaxHealth = 2000.f;
+        EnemyData.BaseStats.MagicResistance = 100.f;
+        ABattleUnitBase* Caster = F.Spawn(TEXT("Caster"), CasterData, EBattleTeam::Player, 0);
+        ABattleUnitBase* Enemy = F.Spawn(TEXT("Enemy"), EnemyData, EBattleTeam::Enemy, 4);
+        ABattleUnitBase* Other = F.Spawn(TEXT("Other"), EnemyData, EBattleTeam::Enemy, 5);
+        if (!Caster || !Enemy || !Other) { AddError(TEXT("Could not deploy lightning test units")); return false; }
+        Caster->SetStarLevel(Stars);
+        const float StunTime = Stars == 1 ? 1.f : 0.5f;
+        Enemy->CombatPolicy.StunDurationMultiplier = StunTime;
+        for (ABattleUnitBase* Unit : {Caster, Enemy, Other}) Unit->StartCombat();
+        Caster->GainMana(Caster->FinalStats.MaxMana);
+        Caster->CurrentTarget = Other;
+        TestFalse(TEXT("Target beyond four tiles cannot be cast on"), Caster->TryCastSkill());
+        Caster->CurrentTarget = Enemy;
+        if (!TestTrue(TEXT("Current enemy in range starts cast"), Caster->TryCastSkill())) return false;
+        const int32 ActionId = Caster->ActiveActionId;
+        TestTrue(TEXT("Lightning commits once"), Caster->CommitSkillEffect(ActionId));
+        TestFalse(TEXT("Duplicate impact does not repeat damage"), Caster->CommitSkillEffect(ActionId));
+        TestEqual(TEXT("AP 200 doubles raw damage and magic resistance halves it"),
+            Enemy->CurrentHP, Stars == 1 ? 1700.f : 1460.f);
+        TestEqual(TEXT("Other target takes no damage"), Other->CurrentHP, 2000.f);
+        if (TestEqual(TEXT("Target received one stun"), Enemy->ActiveModifiers.Num(), 1))
+        {
+            TestTrue(TEXT("The modifier is a stun"), Enemy->IsStunned());
+            TestEqual(TEXT("Common stun multiplier applies"), Enemy->ActiveModifiers[0].RemainingSeconds, StunTime);
+        }
+        Enemy->Tick(StunTime);
+        TestFalse(TEXT("Stun expires at its given duration"), Enemy->IsStunned());
+
+        Caster->FinishAction(ActionId);
+        Caster->GainMana(Caster->FinalStats.MaxMana);
+        if (!TestTrue(TEXT("Second cast begins before the target dies"), Caster->TryCastSkill())) return false;
+        FUnitDamageRequest Fatal;
+        Fatal.RawDamage = 10000.f;
+        Fatal.Type = EUnitDamageType::TrueDamage;
+        Enemy->ReceiveDamage(Fatal);
+        Caster->CurrentTarget = Other;
+        TestFalse(TEXT("A dead target makes single target lightning fizzle"), Caster->CommitSkillEffect(Caster->ActiveActionId));
+        TestEqual(TEXT("Lightning does not transfer to the new target"), Other->CurrentHP, 2000.f);
+    }
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSpellbladeCombatTest, "ProjectA.Unit.Spellblade.ComboAndCrossSlash",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FSpellbladeCombatTest::RunTest(const FString& Parameters)
+{
+    using namespace UnitCombatTests;
+    FFixture F;
+    FTestUnitData Data;
+    Data.BaseStats.AttackDamage = 100.f;
+    Data.BaseStats.AbilityPower = 100.f;
+    Data.BaseStats.CriticalChance = 1.f;
+    Data.BasicAttack.bUseAnimNotify = true;
+    Data.SkillClasses = {USpellbladeDualWieldSkill::StaticClass(), USpellbladeCrossSlashSkill::StaticClass()};
+    ABattleUnitBase* Caster = F.Spawn(TEXT("Spellblade"), Data, EBattleTeam::Player, 0);
+    FTestUnitData EnemyData;
+    EnemyData.BaseStats.MaxHealth = 1000.f;
+    EnemyData.BaseStats.Armor = 100.f;
+    ABattleUnitBase* Enemy = F.Spawn(TEXT("Enemy"), EnemyData, EBattleTeam::Enemy, 1);
+    if (!Caster || !Enemy) { AddError(TEXT("Could not deploy Spellblade test units")); return false; }
+    Caster->StartCombat();
+    Enemy->StartCombat();
+    Caster->CurrentTarget = Enemy;
+    if (!TestTrue(TEXT("Combo starts"), Caster->TryBasicAttack())) return false;
+    const int32 ComboId = Caster->ActiveActionId;
+    TestFalse(TEXT("Followup waits for primary attack"), Caster->CommitFollowupAttackHit(ComboId));
+    TestTrue(TEXT("Primary lands"), Caster->CommitAttackHit(ComboId));
+    TestEqual(TEXT("Primary uses physical mitigation and the combo crit"), Enemy->CurrentHP, 962.5f);
+    TestTrue(TEXT("Followup lands"), Caster->CommitFollowupAttackHit(ComboId));
+    TestFalse(TEXT("Followup Notify cannot repeat"), Caster->CommitFollowupAttackHit(ComboId));
+    TestEqual(TEXT("Followup uses magic mitigation and the same crit"), Enemy->CurrentHP, 910.f);
+    TestEqual(TEXT("One combo counts as one basic hit"), Caster->BasicHitCount, 1);
+    TestEqual(TEXT("Combo awards mana once"), Caster->CurrentMana, 10.f);
+    Caster->FinishAction(ComboId);
+    Caster->GainMana(Caster->FinalStats.MaxMana);
+    if (!TestTrue(TEXT("Cross slash starts"), Caster->TryCastSkill())) return false;
+    TestTrue(TEXT("Cross slash commits"), Caster->CommitSkillEffect(Caster->ActiveActionId));
+    TestEqual(TEXT("Cross slash deals both types without crit"), Enemy->CurrentHP, 700.f);
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSniperPrecisionShotTest, "ProjectA.Unit.SniperPrecisionShot.ReleaseCountAndCrit",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FSniperPrecisionShotTest::RunTest(const FString& Parameters)
+{
+    using namespace UnitCombatTests;
+    FFixture F;
+    FTestUnitData Data;
+    Data.BaseStats.AttackDamage = 100.f;
+    Data.BaseStats.AttackRange = 5;
+    Data.BaseStats.CriticalChance = 0.f;
+    Data.BaseStats.CriticalMultiplier = 2.f;
+    Data.BasicAttack.Delivery = EUnitAttackDelivery::Projectile;
+    Data.BasicAttack.ProjectileSpeed = 5000.f;
+    Data.SkillClasses = {USniperPrecisionShotSkill::StaticClass()};
+    ABattleUnitBase* Caster = F.Spawn(TEXT("Sniper"), Data, EBattleTeam::Player, 0);
+    FTestUnitData TargetData;
+    TargetData.BaseStats.MaxHealth = 1000.f;
+    ABattleUnitBase* First = F.Spawn(TEXT("First"), TargetData, EBattleTeam::Enemy, 1);
+    ABattleUnitBase* Second = F.Spawn(TEXT("Second"), TargetData, EBattleTeam::Enemy, 2);
+    if (!Caster || !First || !Second) { AddError(TEXT("Could not deploy sniper test units")); return false; }
+    for (ABattleUnitBase* Unit : {Caster, First, Second}) Unit->StartCombat();
+    const auto Fire = [Caster](ABattleUnitBase* Target, bool bRelease)
+    {
+        Caster->CurrentTarget = Target;
+        if (!Caster->TryBasicAttack()) return false;
+        const int32 ActionId = Caster->ActiveActionId;
+        const bool bCommitted = !bRelease || Caster->CommitAttackHit(ActionId);
+        Caster->FinishAction(ActionId);
+        Caster->CurrentTarget = nullptr;
+        Caster->Tick(1.f);
+        return bCommitted;
+    };
+    TestFalse(TEXT("Passive-only sniper does not use mana"), Caster->UsesMana());
+    if (!TestTrue(TEXT("First projectile releases"), Fire(First, true))) return false;
+    TestEqual(TEXT("First shot is normal"), First->CurrentHP, 900.f);
+    if (!TestTrue(TEXT("A windup is cancelled before release"), Fire(First, false))) return false;
+    if (!TestTrue(TEXT("Second projectile releases at another target"), Fire(Second, true))) return false;
+    TestEqual(TEXT("Cancelled windup does not increment or switch progress"), Second->CurrentHP, 900.f);
+    if (!TestTrue(TEXT("Third projectile releases"), Fire(Second, true))) return false;
+    TestEqual(TEXT("Third shot is guaranteed critical at the configured multiplier"), Second->CurrentHP, 500.f);
+    if (!TestTrue(TEXT("Cycle restarts after the precision shot"), Fire(First, true))) return false;
+    TestEqual(TEXT("Fourth shot is normal"), First->CurrentHP, 800.f);
+    Caster->StopCombat();
+    TestEqual(TEXT("Round cleanup resets cycle"), Caster->GetEquippedSkills()[0]->Counter, 0);
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FElementalistIceLanceTest, "ProjectA.Unit.Elementalist.IceLance",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FElementalistIceLanceTest::RunTest(const FString& Parameters)
+{
+    using namespace UnitCombatTests;
+    FFixture F;
+    FTestUnitData Data;
+    Data.BaseStats.AbilityPower = 100.f;
+    Data.SkillClasses = {UElementalistSkill::StaticClass()};
+    ABattleUnitBase* Caster = F.Spawn(TEXT("Elementalist"), Data, EBattleTeam::Player, 0);
+    Data.SkillClasses.Reset();
+    Data.BaseStats.MaxHealth = 1000.f;
+    ABattleUnitBase* Enemy = F.Spawn(TEXT("Enemy"), Data, EBattleTeam::Enemy, 1);
+    if (!Caster || !Enemy) { AddError(TEXT("Could not deploy ice lance test units")); return false; }
+    Caster->SetStarLevel(2);
+    auto* Skill = Cast<UElementalistSkill>(Caster->GetEquippedSkills()[0]);
+    if (!TestNotNull(TEXT("Elementalist skill"), Skill)) return false;
+    Skill->FrostTwoStarAPRatio = 4.f;
+    Caster->StartCombat();
+    Enemy->StartCombat();
+    Caster->CurrentTarget = Enemy;
+    Caster->GainMana(45.f);
+    if (!TestTrue(TEXT("Frost casts at 45 mana"), Caster->TryCastSkill())) return false;
+    TestTrue(TEXT("Ice Lance releases"), Caster->CommitSkillEffect(Caster->ActiveActionId));
+    TestEqual(TEXT("Damage waits for projectile arrival"), Enemy->CurrentHP, 1000.f);
+    Caster->Tick(0.5f);
+    TestEqual(TEXT("Two-star Frost ratio can be tuned separately"), Enemy->CurrentHP, 600.f);
+    TestEqual(TEXT("Ice Lance slows attack speed"), Enemy->FinalStats.AttackSpeed, 0.75f);
+    Enemy->Tick(3.f);
+    TestEqual(TEXT("Slow expires after three seconds"), Enemy->FinalStats.AttackSpeed, 1.f);
     return true;
 }
 

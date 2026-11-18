@@ -42,6 +42,7 @@ FString ResultText(ETransactionResult Result)
         case ETransactionResult::NoSpace: return TEXT("No free slot.");
         case ETransactionResult::Unavailable: return TEXT("That action is unavailable.");
         case ETransactionResult::ChangeRejected: return TEXT("The board could not apply this change.");
+        case ETransactionResult::FormChoiceRequired: return {};
     }
     return {};
 }
@@ -144,9 +145,18 @@ void UShopPanel::Draw(AHUD* HUD, UCanvas* Canvas)
 
     FRosterUnit Unit;
     if (Selected.IsValid() && !Manager->Roster->GetUnit(Selected, Unit)) Selected.Invalidate();
-    DrawShop(*HUD, *Manager->Shop);
-    DrawItemsAndUnitActions(*HUD, *Manager);
-    if (Manager->Shop->GetPhase() == EShopPhase::RewardSelection) DrawRewards(*HUD, *Manager);
+    FGuid Elementalist;
+    FUnitPosition Destination;
+    EElementalForm PreviousForm;
+    int32 Revision = 0;
+    if (Manager->GetPendingElementalPlacement(Elementalist, Destination, PreviousForm, Revision))
+        DrawElementalPlacement(*HUD, Destination, PreviousForm, Revision);
+    else
+    {
+        DrawShop(*HUD, *Manager->Shop);
+        DrawItemsAndUnitActions(*HUD, *Manager);
+        if (Manager->Shop->GetPhase() == EShopPhase::RewardSelection) DrawRewards(*HUD, *Manager);
+    }
 
     float X, Y;
     if (PC->GetMousePosition(X, Y))
@@ -184,6 +194,25 @@ void UShopPanel::DrawShop(AHUD& HUD, const AShopManager& Manager)
         Button.Revision = Manager.GetShopRevision();
         AddButton(HUD, Label, Button, bTrade && !Offer.UnitId.IsNone());
     }
+}
+
+void UShopPanel::DrawElementalPlacement(AHUD& HUD, const FUnitPosition& Destination, EElementalForm PreviousForm, int32 Revision)
+{
+    const float Width = FMath::Min(700.f, static_cast<float>(ViewSize.X) - 32.f);
+    const float X = (static_cast<float>(ViewSize.X) - Width) / 2;
+    const float Y = static_cast<float>(ViewSize.Y) - 160.f;
+    HUD.DrawRect(PanelBackground, X, Y, Width, 94.f);
+    HUD.DrawText(FString::Printf(TEXT("ELEMENTALIST  |  TILE %d, %d"), Destination.Row + 1, Destination.Column + 1),
+        GoldColor, X + 12.f, Y + 12.f);
+    AddButton(HUD, TEXT("Cancel"), { EAction::CancelElementalForm, { X + Width - 104.f, Y + 7.f }, { 92.f, 27.f } });
+
+    const float CardWidth = (Width - 28.f) / 2.f;
+    FButton Frost{EAction::ElementalForm, {X + 12.f, Y + 42.f}, {CardWidth, 42.f}, static_cast<int32>(EElementalForm::Frost)};
+    Frost.Revision = Revision;
+    AddButton(HUD, TEXT("Frost  |  Ice Lance"), Frost, true, PreviousForm == EElementalForm::Frost);
+    FButton Fire{EAction::ElementalForm, {X + 16.f + CardWidth, Y + 42.f}, {CardWidth, 42.f}, static_cast<int32>(EElementalForm::Fire)};
+    Fire.Revision = Revision;
+    AddButton(HUD, TEXT("Fire  |  Meteor"), Fire, true, PreviousForm == EElementalForm::Fire);
 }
 
 void UShopPanel::DrawItemsAndUnitActions(AHUD& HUD, const AShopTransactionManager& Manager)
@@ -304,6 +333,7 @@ void UShopPanel::HandleInput(const FInputKeyEventArgs& Event)
     if (!Manager || !Manager->IsConfigured() || !HUD) return;
     if (Event.Key == EKeys::RightMouseButton)
     {
+        Manager->CancelElementalPlacement();
         Selected.Invalidate();
         return;
     }
@@ -342,6 +372,8 @@ void UShopPanel::RunAction(const FButton& Button, AShopTransactionManager& Manag
         case EAction::Unequip: Result = Manager.RequestUnequip(Button.Unit, Button.Index); break;
         case EAction::Sell: Result = Manager.RequestSell(Button.Unit); break;
         case EAction::Reward: Result = Manager.RequestReward(Button.Index, Button.Revision); break;
+        case EAction::ElementalForm: Result = Manager.RequestElementalPlacement(static_cast<EElementalForm>(Button.Index), Button.Revision); break;
+        case EAction::CancelElementalForm: Manager.CancelElementalPlacement(); break;
         case EAction::InventoryPage: ItemPage += Button.Index; break;
     }
     Feedback = Button.Action == EAction::Reward && Result == ETransactionResult::Success
