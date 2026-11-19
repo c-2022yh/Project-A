@@ -79,6 +79,39 @@ namespace UnitRunnerTests
     };
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FUnitRunnerManualLineupTest, "ProjectA.TestRunner.ManualLineup",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FUnitRunnerManualLineupTest::RunTest(const FString& Parameters)
+{
+    using namespace UnitRunnerTests;
+    FFixture F;
+    AUnitCombatTestRunner* Runner = F.Runner();
+    ABoardTile* Ally = F.Board->GetTile(0, 0);
+    ABoardTile* Extra = F.Board->GetTile(0, 1);
+    ABoardTile* Enemy = F.Board->GetTile(5, 4);
+    if (!Ally || !Extra || !Enemy) { AddError(TEXT("Test board did not generate")); return false; }
+    TestTrue(TEXT("Panel rows come from the configured table"), Runner->GetSpawnRows() == TArray<FName>{TEXT("Strong"), TEXT("Weak")});
+    TestFalse(TEXT("Empty board cannot start"), Runner->StartLineup());
+    TestFalse(TEXT("Unknown DT row creates no actor"), Runner->SpawnOnTile(TEXT("Missing"), 1, Ally));
+    if (!TestTrue(TEXT("Place two-star ally from row picker"), Runner->SpawnOnTile(TEXT("Strong"), 2, Ally))
+        || !TestTrue(TEXT("Place extra ally"), Runner->SpawnOnTile(TEXT("Weak"), 1, Extra))) return false;
+    TestEqual(TEXT("Chosen star level used"), Runner->AllyUnit->StarLevel, 2);
+    TestTrue(TEXT("Ally occupies the selected square"), Ally->OccupiedUnit == Runner->AllyUnit);
+    TestFalse(TEXT("Cannot overwrite an occupied square"), Runner->SpawnOnTile(TEXT("Weak"), 1, Ally));
+    TestTrue(TEXT("Remove owned ally from chosen tile"), Runner->RemoveFromTile(Extra));
+    TestFalse(TEXT("Single team cannot start"), Runner->StartLineup());
+    if (!TestTrue(TEXT("Enemy square chooses the other team"), Runner->SpawnOnTile(TEXT("Weak"), 1, Enemy))) return false;
+    TestEqual(TEXT("Enemy actor team"), Runner->EnemyUnit->TeamType, EBattleTeam::Enemy);
+    TestTrue(TEXT("Source DT remains unchanged"), F.Data->FindRow<FUnitDefinition>(TEXT("Strong"), TEXT("test"))->BasicAttack.bUseAnimNotify);
+    TestTrue(TEXT("Fight uses selected lineup without respawn"), Runner->StartLineup());
+    TestEqual(TEXT("Both selected actors remain"), F.Units(), 2);
+    TestFalse(TEXT("Cannot place while combat runs"), Runner->SpawnOnTile(TEXT("Strong"), 1, Extra));
+    TestTrue(TEXT("Selected teams fight"), F.Until(Runner, EUnitCombatTestState::Finished));
+    Runner->StopTest();
+    TestTrue(TEXT("Clear resets the board and allows editing again"), Runner->CanEditLineup() && F.EmptyBoard() && F.Units() == 0);
+    return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FUnitRunnerFlowTest, "ProjectA.TestRunner.FlowAndIsolation",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 bool FUnitRunnerFlowTest::RunTest(const FString& Parameters)

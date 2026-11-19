@@ -1,13 +1,19 @@
 #include "UnitCombatTestRunner.h"
+#include "CombatTestSpawnPanel.h"
 #include "../BattleUnitBase.h"
 #include "../BoardManager.h"
 #include "../BoardTile.h"
 #include "Components/SceneComponent.h"
 #include "Engine/Engine.h"
+#include "Engine/GameInstance.h"
+#include "Engine/GameViewportClient.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "GameFramework/GameModeBase.h"
+#include "GameFramework/PlayerController.h"
+#include "Framework/Application/SlateApplication.h"
 #include "Kismet/GameplayStatics.h"
+#include "Misc/App.h"
 #include "TimerManager.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogUnitCombatTest, Log, All);
@@ -23,7 +29,108 @@ AUnitCombatTestRunner::AUnitCombatTestRunner()
 void AUnitCombatTestRunner::BeginPlay()
 {
     Super::BeginPlay();
-    if (bAutoStartOnPlay) StartTest();
+    if (!OpenSpawnPanel() && bAutoStartOnPlay) StartTest();
+}
+
+bool AUnitCombatTestRunner::OpenSpawnPanel()
+{
+    if (!bEnableSpawnPanel || !FSlateApplication::IsInitialized() || !FApp::CanEverRender()) return false;
+    UGameInstance* Instance = GetGameInstance();
+    UGameViewportClient* Viewport = IsValid(Instance) ? Instance->GetGameViewportClient() : nullptr;
+    if (!IsValid(Viewport) || !Instance->GetFirstGamePlayer()) return false;
+    FString Error;
+    if (!ValidateIsolation(Error) || !ResolveBoard(Error)) return false;
+    SpawnPanel = CreateCombatTestSpawnPanel(this);
+    PanelViewport = Viewport;
+    Viewport->AddViewportWidgetContent(SpawnPanel.ToSharedRef(), 20);
+    Status = TEXT("Choose a DT row and click a board square.");
+    return true;
+}
+
+TArray<FName> AUnitCombatTestRunner::GetSpawnRows() const
+{
+    const UDataTable* Data = UnitDataTable.LoadSynchronous();
+    if (!IsValid(Data) || Data->GetRowStruct() != FUnitDefinition::StaticStruct()) return {};
+    TArray<FName> Rows = Data->GetRowNames();
+    Rows.Sort(FNameLexicalLess());
+    return Rows;
+}
+
+bool AUnitCombatTestRunner::IsOwnedUnit(const ABattleUnitBase* Unit) const
+{
+    return IsValid(Unit) && SpawnedUnits.ContainsByPredicate([Unit](const auto& Weak) { return Weak.Get() == Unit; });
+}
+
+bool AUnitCombatTestRunner::SpawnOnTile(FName RowName, int32 Stars, ABoardTile* Tile)
+{
+    if (!CanEditLineup()) return false;
+    FString Error;
+    if (!ValidateIsolation(Error) || !ResolveBoard(Error)) { SetStatus(TestState, Error); return false; }
+    if (!IsValid(Tile) || Tile->OwningBoard != Board || !Board->Tiles.Contains(Tile) || !Tile->CanPlaceUnit()
+        || (Tile->TeamType != EBoardTileTeam::Player && Tile->TeamType != EBoardTileTeam::Enemy))
+    {
+        SetStatus(TestState, TEXT("Choose an empty ally or enemy square."));
+        return false;
+    }
+    if (Stars < 1 || Stars > 2) return false;
+
+    UClass* Class = UnitClass.LoadSynchronous();
+    const UDataTable* Source = UnitDataTable.LoadSynchronous();
+    const FUnitDefinition* Row = IsValid(Source) && Source->GetRowStruct() == FUnitDefinition::StaticStruct()
+        ? Source->FindRow<FUnitDefinition>(RowName, TEXT("CombatTestSpawnPanel"), false) : nullptr;
+    if (!IsValid(Class) || !Class->IsChildOf(ABattleUnitBase::StaticClass()) || Class->HasAnyClassFlags(CLASS_Abstract) || !Row)
+    {
+        SetStatus(TestState, TEXT("Check the runner's Unit Class and Unit Data Table."));
+        return false;
+    }
+    if (!RuntimeData)
+    {
+        RuntimeData = NewObject<UDataTable>(this, NAME_None, RF_Transient);
+        RuntimeData->RowStruct = FUnitDefinition::StaticStruct();
+    }
+    FUnitDefinition Copy = *Row;
+    if (bUseTimerAttackForTest) Copy.BasicAttack.bUseAnimNotify = false;
+    if (!RuntimeData->FindRow<FUnitDefinition>(RowName, TEXT("CombatTestSpawnPanel"), false))
+        RuntimeData->AddRow(RowName, Copy);
+
+    FUnitCombatTestSide Side;
+    Side.RowName = RowName; Side.Stars = Stars; Side.Row = Tile->Row; Side.Column = Tile->Column;
+    const EBattleTeam Team = Tile->TeamType == EBoardTileTeam::Player ? EBattleTeam::Player : EBattleTeam::Enemy;
+    if (!SpawnAndPlace(Class, Side, Team, Error)) { SetStatus(TestState, Error); return false; }
+    RefreshPrimaryUnits();
+    SetStatus(TestState, FString::Printf(TEXT("%s %d-star placed."), *RowName.ToString(), Stars));
+    return true;
+}
+
+bool AUnitCombatTestRunner::RemoveFromTile(ABoardTile* Tile)
+{
+    if (!CanEditLineup() || !IsValid(Board) || !IsValid(Tile) || Tile->OwningBoard != Board
+        || !Board->Tiles.Contains(Tile)) return false;
+    ABattleUnitBase* Unit = Cast<ABattleUnitBase>(Tile->OccupiedUnit);
+    if (!IsOwnedUnit(Unit)) { SetStatus(TestState, TEXT("Choose a unit spawned by this test runner.")); return false; }
+    SpawnedUnits.Remove(TWeakObjectPtr<ABattleUnitBase>(Unit));
+    Unit->OnUnitDied.RemoveDynamic(this, &AUnitCombatTestRunner::HandleUnitDied);
+    Unit->StopCombat();
+    Unit->Destroy();
+    RefreshPrimaryUnits();
+    SetStatus(TestState, TEXT("Unit removed."));
+    return true;
+}
+
+bool AUnitCombatTestRunner::StartLineup()
+{
+    if (!CanEditLineup()) return false;
+    FString Error;
+    if (!ValidateIsolation(Error) || !ResolveBoard(Error)) { SetStatus(TestState, Error); return false; }
+    if (!HasLivingTeam(EBattleTeam::Player) || !HasLivingTeam(EBattleTeam::Enemy))
+    {
+        SetStatus(TestState, TEXT("Place at least one unit on each team."));
+        return false;
+    }
+    ElapsedCombatTime = 0.f;
+    SetStatus(EUnitCombatTestState::Preparing, TEXT("Preparing selected test teams..."));
+    PrepareSpawnedCombat();
+    return true;
 }
 void AUnitCombatTestRunner::SetStatus(EUnitCombatTestState State, const FString& Message)
 {
@@ -132,33 +239,58 @@ void AUnitCombatTestRunner::TrySetup()
     for (const FUnitCombatTestSide& Side : Enemies)
         if (!ValidateSide(Side, EBoardTileTeam::Enemy)) { Fail(Error); return; }
     SetStatus(EUnitCombatTestState::Preparing, TEXT("Spawning and placing the test teams..."));
-    const auto SpawnSide = [&](const FUnitCombatTestSide& Side, EBattleTeam Team) -> ABattleUnitBase*
-    {
-        ABoardTile* Tile = Board->GetTile(Side.Row, Side.Column);
-        FActorSpawnParameters Params; Params.Owner = this; Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-        ABattleUnitBase* Unit = GetWorld()->SpawnActor<ABattleUnitBase>(Class, Tile->GetSurfaceLocation() + FVector(0,0,1), FRotator::ZeroRotator, Params);
-        if (!Unit) { Error = TEXT("SpawnActor failed for the configured Unit Class."); return nullptr; }
-        SpawnedUnits.Add(Unit);
-        FDataTableRowHandle Data; Data.DataTable = RuntimeData; Data.RowName = Side.RowName;
-        if (!Unit->InitializeUnit(Data, Team, Side.Stars, Error)) return nullptr;
-        if (!Unit->PlaceOnTile(Tile)) { Error = TEXT("PlaceOnTile failed for a test unit."); return nullptr; }
-        Unit->OnUnitDied.AddDynamic(this, &AUnitCombatTestRunner::HandleUnitDied);
-        return Unit;
-    };
     for (const FUnitCombatTestSide& Side : Allies)
-    {
-        ABattleUnitBase* Unit = SpawnSide(Side, EBattleTeam::Player);
-        if (!Unit) { Fail(TEXT("Ally setup failed: ") + Error); return; }
-        if (!AllyUnit) AllyUnit = Unit;
-    }
+        if (!SpawnAndPlace(Class, Side, EBattleTeam::Player, Error)) { Fail(TEXT("Ally setup failed: ") + Error); return; }
     for (const FUnitCombatTestSide& Side : Enemies)
+        if (!SpawnAndPlace(Class, Side, EBattleTeam::Enemy, Error)) { Fail(TEXT("Enemy setup failed: ") + Error); return; }
+    RefreshPrimaryUnits();
+    PrepareSpawnedCombat();
+}
+
+ABattleUnitBase* AUnitCombatTestRunner::SpawnAndPlace(UClass* Class, const FUnitCombatTestSide& Side, EBattleTeam Team, FString& Error)
+{
+    ABoardTile* Tile = Board->GetTile(Side.Row, Side.Column);
+    if (!IsValid(Tile) || !Tile->CanPlaceUnit())
+    { Error = TEXT("The requested board square is not available."); return nullptr; }
+    FActorSpawnParameters Params;
+    Params.Owner = this;
+    Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+    ABattleUnitBase* Unit = GetWorld()->SpawnActor<ABattleUnitBase>(Class,
+        Tile->GetSurfaceLocation() + FVector(0, 0, 1), FRotator::ZeroRotator, Params);
+    if (!Unit) { Error = TEXT("SpawnActor failed for the configured Unit Class."); return nullptr; }
+
+    FDataTableRowHandle Data;
+    Data.DataTable = RuntimeData;
+    Data.RowName = Side.RowName;
+    if (!Unit->InitializeUnit(Data, Team, Side.Stars, Error) || !Unit->PlaceOnTile(Tile))
     {
-        ABattleUnitBase* Unit = SpawnSide(Side, EBattleTeam::Enemy);
-        if (!Unit) { Fail(TEXT("Enemy setup failed: ") + Error); return; }
-        if (!EnemyUnit) EnemyUnit = Unit;
+        if (Error.IsEmpty()) Error = TEXT("PlaceOnTile failed for a test unit.");
+        Unit->Destroy();
+        return nullptr;
     }
+    SpawnedUnits.Add(Unit);
+    Unit->OnUnitDied.AddDynamic(this, &AUnitCombatTestRunner::HandleUnitDied);
+    return Unit;
+}
+
+void AUnitCombatTestRunner::RefreshPrimaryUnits()
+{
+    AllyUnit = nullptr;
+    EnemyUnit = nullptr;
+    for (const auto& Weak : SpawnedUnits)
+    {
+        ABattleUnitBase* Unit = Weak.Get();
+        if (!IsValid(Unit)) continue;
+        if (Unit->TeamType == EBattleTeam::Player && !AllyUnit) AllyUnit = Unit;
+        if (Unit->TeamType == EBattleTeam::Enemy && !EnemyUnit) EnemyUnit = Unit;
+    }
+}
+
+void AUnitCombatTestRunner::PrepareSpawnedCombat()
+{
     TArray<ABattleUnitBase*> Roster;
-    for (const TWeakObjectPtr<ABattleUnitBase>& Weak : SpawnedUnits) Roster.Add(Weak.Get());
+    for (const TWeakObjectPtr<ABattleUnitBase>& Weak : SpawnedUnits)
+        if (Weak.IsValid()) Roster.Add(Weak.Get());
     float Delay = FMath::IsFinite(StartDelay) ? FMath::Max(0.f, StartDelay) : 0.f;
     for (ABattleUnitBase* Unit : Roster)
     {
@@ -212,6 +344,19 @@ bool AUnitCombatTestRunner::HasLivingTeam(EBattleTeam Team) const
 void AUnitCombatTestRunner::Tick(float DeltaSeconds)
 {
     Super::Tick(DeltaSeconds);
+    if (SpawnPanel.IsValid() && !PanelController.IsValid())
+    {
+        APlayerController* Controller = GetWorld()->GetFirstPlayerController();
+        if (IsValid(Controller) && Controller->IsLocalController())
+        {
+            PanelController = Controller;
+            bPreviousMouseCursor = Controller->bShowMouseCursor;
+            Controller->bShowMouseCursor = true;
+            FInputModeGameAndUI Mode;
+            Mode.SetHideCursorDuringCapture(false);
+            Controller->SetInputMode(Mode);
+        }
+    }
     if (TestState != EUnitCombatTestState::Running) return;
     if (!IsValid(Board) || SpawnedUnits.ContainsByPredicate([](const TWeakObjectPtr<ABattleUnitBase>& Unit) { return !Unit.IsValid(); }))
     { Fail(TEXT("A test actor was removed during combat.")); return; }
@@ -261,5 +406,13 @@ void AUnitCombatTestRunner::StopTest()
 void AUnitCombatTestRunner::RestartTest() { StopTest(); StartTest(); }
 void AUnitCombatTestRunner::EndPlay(const EEndPlayReason::Type Reason)
 {
+    if (PanelViewport.IsValid() && SpawnPanel.IsValid())
+        PanelViewport->RemoveViewportWidgetContent(SpawnPanel.ToSharedRef());
+    if (APlayerController* Controller = PanelController.Get())
+    {
+        Controller->bShowMouseCursor = bPreviousMouseCursor;
+        Controller->SetInputMode(FInputModeGameOnly());
+    }
+    SpawnPanel.Reset();
     CleanupOwnedUnits(); Super::EndPlay(Reason);
 }

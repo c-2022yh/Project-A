@@ -8,6 +8,9 @@
 class ABoardManager;
 class ABattleUnitBase;
 class UDataTable;
+class UGameViewportClient;
+class APlayerController;
+class SWidget;
 
 UENUM(BlueprintType)
 enum class EUnitCombatTestState : uint8 { Idle, WaitingForBoard, Preparing, Running, Finished, Failed };
@@ -58,6 +61,7 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Combat Test|Timing", meta=(ClampMin="0.1")) float BoardWaitTimeout = 5.f;
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Combat Test|Timing", meta=(ClampMin="1")) float CombatTimeout = 60.f;
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Combat Test|Display") bool bShowScreenMessages = true;
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Combat Test|Display") bool bEnableSpawnPanel = true;
 
     UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Transient, Category="Combat Test|Status") EUnitCombatTestState TestState = EUnitCombatTestState::Idle;
     UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Transient, Category="Combat Test|Status") FString Status;
@@ -67,6 +71,12 @@ public:
     UFUNCTION(BlueprintCallable, Category="Combat Test") void StartTest();
     UFUNCTION(BlueprintCallable, Category="Combat Test") void StopTest();
     UFUNCTION(BlueprintCallable, Category="Combat Test") void RestartTest();
+    TArray<FName> GetSpawnRows() const;
+    bool CanEditLineup() const { return TestState == EUnitCombatTestState::Idle && !bCleaningUp; }
+    bool SpawnOnTile(FName RowName, int32 Stars, class ABoardTile* Tile);
+    bool RemoveFromTile(class ABoardTile* Tile);
+    bool StartLineup();
+    bool IsOwnedUnit(const ABattleUnitBase* Unit) const;
 private:
     UPROPERTY(Transient) TObjectPtr<UDataTable> RuntimeData = nullptr;
     TArray<TWeakObjectPtr<ABattleUnitBase>> SpawnedUnits;
@@ -76,6 +86,10 @@ private:
     double WaitStartedAt = 0.0;
     bool bCleaningUp = false;
     bool bResultQueued = false;
+    TSharedPtr<SWidget> SpawnPanel;
+    TWeakObjectPtr<UGameViewportClient> PanelViewport;
+    TWeakObjectPtr<APlayerController> PanelController;
+    bool bPreviousMouseCursor = false;
     bool ValidateIsolation(FString& Error) const;
     bool ResolveBoard(FString& Error);
     void TrySetup();
@@ -88,4 +102,8 @@ private:
     UFUNCTION() void HandleUnitDied(ABattleUnitBase* Unit);
     void ProcessResult();
     bool HasLivingTeam(EBattleTeam Team) const;
+    bool OpenSpawnPanel();
+    ABattleUnitBase* SpawnAndPlace(UClass* Class, const FUnitCombatTestSide& Side, EBattleTeam Team, FString& Error);
+    void PrepareSpawnedCombat();
+    void RefreshPrimaryUnits();
 };
