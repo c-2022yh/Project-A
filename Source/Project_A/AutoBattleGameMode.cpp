@@ -6,6 +6,10 @@
 #include "Components/StaticMeshComponent.h"
 #include "Kismet/GameplayStatics.h"
 #include "TimerManager.h"
+#include "UObject/StructOnScope.h"
+#include "UObject/UnrealType.h"
+#include "Engine/Engine.h"
+#include "EngineUtils.h"
 
 AAutoBattleGameMode::AAutoBattleGameMode()
 {
@@ -17,7 +21,7 @@ AAutoBattleGameMode::AAutoBattleGameMode()
 void AAutoBattleGameMode::BeginPlay()
 {
     Super::BeginPlay();
-    // »ý¼ºµÈ Å¸ÀÏÀ» »ç¿ëÇØ¾ß ÇÏ¹Ç·Î BoardManagerÀÇ BeginPlay°¡ ³¡³­ ´ÙÀ½ À¯´Ö ±¸¼ºÀ» ÃÊ±âÈ­ÇÑ´Ù.
+    // ìƒì„±ëœ íƒ€ì¼ì„ ì‚¬ìš©í•´ì•¼ í•˜ë¯€ë¡œ BoardManagerì˜ BeginPlayê°€ ëë‚œ ë‹¤ìŒ ìœ ë‹› êµ¬ì„±ì„ ì´ˆê¸°í™”í•œë‹¤.
     GetWorldTimerManager().SetTimerForNextTick(this, &AAutoBattleGameMode::InitializeEncounter);
 }
 void AAutoBattleGameMode::ChangePhase(EGamePhase Phase)
@@ -45,7 +49,7 @@ void AAutoBattleGameMode::ClearEncounter()
 void AAutoBattleGameMode::InitializeEncounter()
 {
     ClearEncounter();
-    // ÃÊ±âÈ­ »óÅÂ¸¸ ¼³Á¤ÇÑ´Ù. ½ÇÁ¦ ¹èÄ¡°¡ °¡´ÉÇÑ ÁØºñ ´Ü°è ¾Ë¸²Àº ¾ÆÁ÷ º¸³»Áö ¾Ê´Â´Ù.
+    // ì´ˆê¸°í™” ìƒíƒœë§Œ ì„¤ì •í•œë‹¤. ì‹¤ì œ ë°°ì¹˜ê°€ ê°€ëŠ¥í•œ ì¤€ë¹„ ë‹¨ê³„ ì•Œë¦¼ì€ ì•„ì§ ë³´ë‚´ì§€ ì•ŠëŠ”ë‹¤.
     CurrentPhase = EGamePhase::Preparation;
     RemainingPreparationTime = 0;
     ElapsedCombatTime = 0;
@@ -193,6 +197,7 @@ bool AAutoBattleGameMode::CompleteEncounterSetup()
 void AAutoBattleGameMode::CancelEncounterSetup()
 {
     if (CurrentPhase != EGamePhase::Preparation) return;
+    if (bEnableMainMapRoundTest) return;
     ClearEncounter();
     RemainingPreparationTime = 0;
     StatusMessage = TEXT("Setup cancelled. Registered units were removed.");
@@ -203,16 +208,23 @@ void AAutoBattleGameMode::StartPreparationPhase()
     RestartPreparationCountdown();
     StatusMessage = TEXT("Select an ally, then click an empty player tile. Enter: start. Right click: cancel.");
     ChangePhase(EGamePhase::Preparation);
+    if (bEnableMainMapRoundTest && !bManagedBridgeReady) InitializeManagedRoundBridge();
 }
 void AAutoBattleGameMode::RestartPreparationCountdown()
 {
     if (!bEncounterReady || CurrentPhase != EGamePhase::Preparation) return;
-    RemainingPreparationTime = FMath::Max(0.0f, PreparationDuration);
+    RemainingPreparationTime = bEnableMainMapRoundTest ? 0.f : FMath::Max(0.0f, PreparationDuration);
     bPreparationActive = true;
     bPreparationExpiryReported = false;
 }
 void AAutoBattleGameMode::RequestCombatStart()
 {
+    if (bEnableMainMapRoundTest)
+    {
+        if (bManagedBridgeReady && bEncounterReady && !bManagedTestFinished)
+        { RefreshManagedInteraction(true); CallManaged(TEXT("RequestCombatStart")); }
+        return;
+    }
     if (!bEncounterReady) return;
     if (CurrentPhase == EGamePhase::Preparation && !bPreparationActive) return;
     if (CurrentPhase != EGamePhase::Preparation && CurrentPhase != EGamePhase::RoundClear) return;
@@ -220,6 +232,7 @@ void AAutoBattleGameMode::RequestCombatStart()
 }
 void AAutoBattleGameMode::RequestBattleRestart()
 {
+    if (bEnableMainMapRoundTest) return;
     ReceiveRestartRequested();
 }
 void AAutoBattleGameMode::ReportBattleResult(EGamePhase Result)
@@ -227,12 +240,21 @@ void AAutoBattleGameMode::ReportBattleResult(EGamePhase Result)
     if (CurrentPhase != EGamePhase::Combat || bBattleResultPending) return;
     bBattleResultPending = true;
     PendingBattleResult = Result;
-    // BP¿¡ °á°ú¸¦ ¾Ë¸®±â Àü¿¡ °ø°ÝÀ» ¸ØÃá´Ù. °á°ú È­¸éÀÌ ´Ê°Ô Ç¥½ÃµÇ¾îµµ ÀüÅõ°¡ °è¼ÓµÇÁö ¾Ê°Ô ÇÑ´Ù.
+    // BPì— ê²°ê³¼ë¥¼ ì•Œë¦¬ê¸° ì „ì— ê³µê²©ì„ ë©ˆì¶˜ë‹¤. ê²°ê³¼ í™”ë©´ì´ ëŠ¦ê²Œ í‘œì‹œë˜ì–´ë„ ì „íˆ¬ê°€ ê³„ì†ë˜ì§€ ì•Šê²Œ í•œë‹¤.
     for (ABattleUnitBase* Unit : BattleUnits) if (IsValid(Unit)) Unit->StopCombat();
+    if (bEnableMainMapRoundTest && bManagedBridgeReady)
+    {
+        ManagedLastOutcome = Result == EGamePhase::GameOver ? TEXT("Defeat") : TEXT("Victory");
+        CallManaged(TEXT("NotifyCombatFinished"), [this](UFunction* F,uint8* P) {
+            auto Prop=FindFProperty<FStructProperty>(F,TEXT("CompletedEncounterId"));
+            if(Prop) *Prop->ContainerPtrToValuePtr<FGuid>(P)=ManagedEncounterId;
+        }); return;
+    }
     ReceiveBattleResultDetected(Result);
 }
 void AAutoBattleGameMode::StartCombatPhase()
 {
+    if (bEnableMainMapRoundTest && !bManagedStartAuthorized) { RequestCombatStart(); return; }
     if (!bEncounterReady || CurrentPhase != EGamePhase::Preparation) return;
     if (GetDeployedPlayerCount() == 0)
     {
@@ -264,13 +286,14 @@ void AAutoBattleGameMode::Tick(float DeltaSeconds)
 {
     Super::Tick(DeltaSeconds);
     if (!bEncounterReady) return;
-    if (CurrentPhase == EGamePhase::Preparation && bPreparationActive && !bPreparationExpiryReported && PreparationDuration > 0)
+    if (bEnableMainMapRoundTest && bManagedBridgeReady) RefreshManagedInteraction();
+    if (!bEnableMainMapRoundTest && CurrentPhase == EGamePhase::Preparation && bPreparationActive && !bPreparationExpiryReported && PreparationDuration > 0)
     {
         RemainingPreparationTime = FMath::Max(0.0f, RemainingPreparationTime - DeltaSeconds);
         if (RemainingPreparationTime <= 0)
         {
-            // ÁØºñ ½Ã°£ÀÌ ³¡³¯ ¶§ ÀÌº¥Æ®¸¦ ÇÑ ¹ø¸¸ º¸³½´Ù. BP¿¡¼­ ´ÙÀ½ ´Ü°è ÀüÈ¯À» Áö¿¬ÇÒ ¼öµµ ÀÖ´Ù.
-            // ¹èÄ¡´Â °è¼Ó Çã¿ëÇÑ´Ù. ÃâÀü À¯´ÖÀÌ ¾øÀ» ¶§ÀÇ Àç½Ãµµ´Â StartCombatPhase¿¡¼­ Ã³¸®ÇÑ´Ù.
+            // ì¤€ë¹„ ì‹œê°„ì´ ëë‚  ë•Œ ì´ë²¤íŠ¸ë¥¼ í•œ ë²ˆë§Œ ë³´ë‚¸ë‹¤. BPì—ì„œ ë‹¤ìŒ ë‹¨ê³„ ì „í™˜ì„ ì§€ì—°í•  ìˆ˜ë„ ìžˆë‹¤.
+            // ë°°ì¹˜ëŠ” ê³„ì† í—ˆìš©í•œë‹¤. ì¶œì „ ìœ ë‹›ì´ ì—†ì„ ë•Œì˜ ìž¬ì‹œë„ëŠ” StartCombatPhaseì—ì„œ ì²˜ë¦¬í•œë‹¤.
             bPreparationExpiryReported = true;
             ReceivePreparationExpired();
         }
@@ -278,7 +301,7 @@ void AAutoBattleGameMode::Tick(float DeltaSeconds)
     else if (CurrentPhase == EGamePhase::Combat && !bBattleResultPending)
     {
         ElapsedCombatTime += DeltaSeconds;
-        // ÀüÅõ Áß »ýÁ¸ÀÚ¸¦ Áý°èÇÑ´Ù. ¾çÂÊ ¸ðµÎ Àü¸êÇßÀ¸¸é ÆÐ¹è·Î Ã³¸®ÇÑ´Ù.
+        // ì „íˆ¬ ì¤‘ ìƒì¡´ìžë¥¼ ì§‘ê³„í•œë‹¤. ì–‘ìª½ ëª¨ë‘ ì „ë©¸í–ˆìœ¼ë©´ íŒ¨ë°°ë¡œ ì²˜ë¦¬í•œë‹¤.
         if (GetAliveTeamCount(EBattleTeam::Player) == 0)
         {
             StatusMessage = TEXT("Defeat. R: restart.");
@@ -289,7 +312,7 @@ void AAutoBattleGameMode::Tick(float DeltaSeconds)
             StatusMessage = TEXT("Round clear.");
             ReportBattleResult(CurrentRound >= FMath::Max(1, MaxRound) ? EGamePhase::Victory : EGamePhase::RoundClear);
         }
-        else if (ElapsedCombatTime >= FMath::Max(1.0f, CombatTimeLimit))
+        else if (!bEnableMainMapRoundTest && ElapsedCombatTime >= FMath::Max(1.0f, CombatTimeLimit))
         {
             StatusMessage = TEXT("Defeat: combat time limit reached. R: restart.");
             ReportBattleResult(EGamePhase::GameOver);
@@ -298,6 +321,7 @@ void AAutoBattleGameMode::Tick(float DeltaSeconds)
 }
 void AAutoBattleGameMode::HandleRoundClear()
 {
+    if (bEnableMainMapRoundTest) return;
     if (CurrentPhase != EGamePhase::Combat || (bBattleResultPending && PendingBattleResult == EGamePhase::GameOver)) return;
     if (CurrentRound >= FMath::Max(1, MaxRound)) { HandleVictory(); return; }
     StatusMessage = TEXT("Round clear! Enter: next round. R: restart.");
@@ -305,12 +329,14 @@ void AAutoBattleGameMode::HandleRoundClear()
 }
 void AAutoBattleGameMode::HandleGameOver()
 {
+    if (bEnableMainMapRoundTest) return;
     if (CurrentPhase != EGamePhase::Combat || (bBattleResultPending && PendingBattleResult != EGamePhase::GameOver)) return;
     if (!StatusMessage.StartsWith(TEXT("Defeat:"))) StatusMessage = TEXT("Defeat. R: restart.");
     ChangePhase(EGamePhase::GameOver);
 }
 void AAutoBattleGameMode::HandleVictory()
 {
+    if (bEnableMainMapRoundTest) return;
     if (CurrentPhase != EGamePhase::Combat && CurrentPhase != EGamePhase::RoundClear) return;
     if (bBattleResultPending && PendingBattleResult == EGamePhase::GameOver) return;
     StatusMessage = TEXT("Victory! R: restart.");
@@ -318,12 +344,280 @@ void AAutoBattleGameMode::HandleVictory()
 }
 void AAutoBattleGameMode::AdvanceRound()
 {
+    if (bEnableMainMapRoundTest) return;
     if (CurrentPhase != EGamePhase::RoundClear || CurrentRound >= MaxRound) return;
     ++CurrentRound;
     InitializeEncounter();
 }
 void AAutoBattleGameMode::RestartBattle()
 {
+    if (bEnableMainMapRoundTest) return;
     CurrentRound = 1;
     InitializeEncounter();
+}
+
+namespace ManagedRoundBridge
+{
+    void Guid(UFunction* F, uint8* P, FName Name, FGuid Value)
+    { *FindFProperty<FStructProperty>(F, Name)->ContainerPtrToValuePtr<FGuid>(P) = Value; }
+    void Bool(UFunction* F, uint8* P, FName Name, bool Value)
+    { FindFProperty<FBoolProperty>(F, Name)->SetPropertyValue_InContainer(P, Value); }
+    void Int(UFunction* F, uint8* P, FName Name, int32 Value)
+    { FindFProperty<FIntProperty>(F, Name)->SetPropertyValue_InContainer(P, Value); }
+    bool UMGDragging()
+    {
+        // UMG already belongs to the existing widget; no new build dependency.
+        UClass* Library = FindObject<UClass>(nullptr, TEXT("/Script/UMG.WidgetBlueprintLibrary"));
+        UFunction* Fn = Library ? Library->FindFunctionByName(TEXT("IsDragDropping")) : nullptr;
+        if (!Fn) return false;
+        FStructOnScope Params(Fn);
+        Library->GetDefaultObject()->ProcessEvent(Fn, Params.GetStructMemory());
+        const FBoolProperty* Result = FindFProperty<FBoolProperty>(Fn, TEXT("ReturnValue"));
+        return Result && Result->GetPropertyValue_InContainer(Params.GetStructMemory());
+    }
+}
+
+void AAutoBattleGameMode::ManagedError(const FString& Message)
+{
+    StatusMessage = TEXT("Round integration error: ") + Message;
+    bManagedBridgeReady = false;
+    for (ABattleUnitBase* Unit : BattleUnits) if (IsValid(Unit)) Unit->StopCombat();
+    UE_LOG(LogTemp, Error, TEXT("MANAGED_MAINMAP_ERROR: %s"), *Message);
+}
+
+bool AAutoBattleGameMode::CallManaged(FName Name, TFunctionRef<void(UFunction*, uint8*)> Fill)
+{
+    UFunction* Fn = IsValid(ManagedRoundManager) ? ManagedRoundManager->FindFunction(Name) : nullptr;
+    if (!Fn) { ManagedError(TEXT("Missing RoundManager function: ") + Name.ToString()); return false; }
+    FStructOnScope Params(Fn);
+    Fill(Fn, Params.GetStructMemory());
+    ManagedRoundManager->ProcessEvent(Fn, Params.GetStructMemory());
+    return true;
+}
+bool AAutoBattleGameMode::CallManaged(FName Name)
+{ return CallManaged(Name, [](UFunction*, uint8*) {}); }
+
+bool AAutoBattleGameMode::BindManagedEvent(FName EventName, FName HandlerName)
+{
+    const FMulticastDelegateProperty* Property = FindFProperty<FMulticastDelegateProperty>(ManagedRoundManager->GetClass(), EventName);
+    if (!Property || !FindFunction(HandlerName)) return false;
+    FScriptDelegate Delegate; Delegate.BindUFunction(this, HandlerName);
+    Property->AddDelegate(Delegate, ManagedRoundManager);
+    return true;
+}
+
+int32 AAutoBattleGameMode::GetManagedRoundPhase() const
+{
+    if (!IsValid(ManagedRoundManager)) return -1;
+    const FByteProperty* Phase = FindFProperty<FByteProperty>(ManagedRoundManager->GetClass(), TEXT("CurrentPhase"));
+    return Phase ? Phase->GetPropertyValue_InContainer(ManagedRoundManager) : -1;
+}
+
+bool AAutoBattleGameMode::InitializeManagedRoundBridge()
+{
+    if (!bEnableMainMapRoundTest || !bEncounterReady || BattleUnits.IsEmpty()) return false;
+    if (bManagedBridgeReady) return true;
+    const FObjectPropertyBase* Ref = FindFProperty<FObjectPropertyBase>(GetClass(), TEXT("RoundManagerReference"));
+    ManagedRoundManager = Ref ? Cast<AActor>(Ref->GetObjectPropertyValue_InContainer(this)) : nullptr;
+    if (!IsValid(ManagedRoundManager))
+    {
+        auto Class=LoadClass<AActor>(nullptr,TEXT("/Game/BluePrints/GameFlow/BP_RoundManager.BP_RoundManager_C"));
+        if(!Class)return false;
+        for(TActorIterator<AActor> It(GetWorld(),Class);It;++It){if(ManagedRoundManager){ManagedError(TEXT("Duplicate RoundManagers"));return false;}ManagedRoundManager=*It;}
+        if(!ManagedRoundManager)ManagedRoundManager=GetWorld()->SpawnActor<AActor>(Class);
+    }
+    if(!ParticipantRecords()){ManagedError(TEXT("RoundManager participant array missing"));return false;}
+    for (FName Name : {FName(TEXT("ConfigureIntegration")), FName(TEXT("InitializeFlow")), FName(TEXT("ConfigureTemporaryRewardBypass")), FName(TEXT("UpdateInteractionState")), FName(TEXT("NotifyDeploymentLimitApplied")), FName(TEXT("NotifyRoundPreparationCompleted")), FName(TEXT("RequestCombatStart")), FName(TEXT("NotifyCombatFinished")), FName(TEXT("NotifyCombatResolutionCompleted")), FName(TEXT("ConfirmProgressionToReward")), FName(TEXT("ResolveFinalRoundPolicy"))})
+        if (!ManagedRoundManager->FindFunction(Name)) { ManagedError(TEXT("Required Blueprint API missing: ") + Name.ToString()); return false; }
+    const TPair<FName, FName> Bindings[] = {
+        {TEXT("OnDeploymentLimitChangeRequested"), TEXT("ManagedDeploymentRequested")},
+        {TEXT("OnRoundPreparationRequested"), TEXT("ManagedPreparationRequested")},
+        {TEXT("OnCombatStartRequested"), TEXT("ManagedCombatStartRequested")},
+        {TEXT("OnCombatStopRequested"), TEXT("ManagedCombatStopRequested")},
+        {TEXT("OnCombatResolutionRequired"), TEXT("ManagedResolutionRequested")},
+        {TEXT("OnFinalRoundPolicyRequired"), TEXT("ManagedFinalPolicyRequested")},
+        {TEXT("OnPhaseChanged"), TEXT("ManagedPhaseChanged")},
+        {TEXT("OnStartAvailabilityChanged"), TEXT("ManagedAvailabilityChanged")},
+        {TEXT("OnConfigurationError"), TEXT("ManagedConfigurationError")}
+    };
+    for (const auto& Binding : Bindings) if (!BindManagedEvent(Binding.Key, Binding.Value)) { ManagedError(TEXT("Unable to bind ") + Binding.Key.ToString()); return false; }
+    bManagedBridgeReady = true;
+    MaxRound = 5;
+    CallManaged(TEXT("ConfigureTemporaryRewardBypass"), [](UFunction* F, uint8* P) { ManagedRoundBridge::Bool(F, P, TEXT("bEnabled"), true); });
+    CallManaged(TEXT("ConfigureIntegration"), [](UFunction* F, uint8* P) {
+        for (FName Name : {FName(TEXT("TimerOwnershipConfirmed")), FName(TEXT("PhaseSyncConfirmed")), FName(TEXT("DeploymentAdapterReady")), FName(TEXT("CombatAdapterReady")), FName(TEXT("PreparationAdapterReady")), FName(TEXT("RewardAdapterReady"))}) ManagedRoundBridge::Bool(F, P, Name, true);
+    });
+    RefreshManagedInteraction(true);
+    CallManaged(TEXT("InitializeFlow"));
+    UE_LOG(LogTemp, Display, TEXT("MANAGED_MAINMAP_READY: units=%d timerOwner=RoundManager rewardBypass=test-only"), BattleUnits.Num());
+    return bManagedBridgeReady;
+}
+
+void AAutoBattleGameMode::SetManagedDragState(bool Unit, bool Item)
+{
+    bManagedUnitDragging = Unit; bManagedItemDragging = Item;
+    if (bEnableMainMapRoundTest && bManagedBridgeReady) RefreshManagedInteraction(true);
+}
+void AAutoBattleGameMode::RefreshManagedInteraction(bool bForce)
+{
+    if (!bManagedBridgeReady || (!bForce && GetManagedRoundPhase() != 1)) return;
+    const int32 Count = GetDeployedPlayerCount();
+    auto PC=Cast<AAutoBattlePlayerController>(UGameplayStatics::GetPlayerController(this,0));
+    const bool Unit = bManagedUnitDragging || (PC && PC->IsUnitDragActive()) || ManagedRoundBridge::UMGDragging();
+    const bool Item = bManagedItemDragging;
+    if (!bForce && Count == LastManagedDeployedCount && Unit == bLastManagedUnitDragging && Item == bLastManagedItemDragging) return;
+    LastManagedDeployedCount = Count; bLastManagedUnitDragging = Unit; bLastManagedItemDragging = Item;
+    CallManaged(TEXT("UpdateInteractionState"), [Count, Unit, Item](UFunction* F, uint8* P) {
+        ManagedRoundBridge::Int(F, P, TEXT("AllyCount"), Count);
+        ManagedRoundBridge::Bool(F, P, TEXT("UnitDragging"), Unit);
+        ManagedRoundBridge::Bool(F, P, TEXT("ItemDragging"), Item);
+    });
+}
+
+void AAutoBattleGameMode::ManagedDeploymentRequested(int32 Limit, int32 LimitRoundNumber, FGuid RequestId)
+{
+    const bool Valid = ManagedRequestMatches(TEXT("bAwaitingDeployment"),TEXT("DeploymentRequestId"),RequestId) && LimitRoundNumber >= 1 && LimitRoundNumber <= 5 && Limit == LimitRoundNumber + 1;
+    if (Valid) MaxBoardUnits = Limit;
+    UE_LOG(LogTemp, Display, TEXT("MANAGED_LIMIT: round=%d limit=%d applied=%d"), LimitRoundNumber, Limit, Valid);
+    CallManaged(TEXT("NotifyDeploymentLimitApplied"), [RequestId, Valid](UFunction* F, uint8* P) {
+        ManagedRoundBridge::Guid(F, P, TEXT("RequestId"), RequestId); ManagedRoundBridge::Bool(F, P, TEXT("bSuccess"), Valid);
+    });
+}
+
+
+TArray<FIntegrationRoundParticipant>* AAutoBattleGameMode::ParticipantRecords() const
+{
+    if (!IsValid(ManagedRoundManager)) return nullptr;
+    auto P=FindFProperty<FArrayProperty>(ManagedRoundManager->GetClass(),TEXT("RoundParticipantSnapshots"));
+    auto Inner=P?CastField<FStructProperty>(P->Inner):nullptr;
+    return Inner && Inner->Struct==FIntegrationRoundParticipant::StaticStruct()
+        ? P->ContainerPtrToValuePtr<TArray<FIntegrationRoundParticipant>>(ManagedRoundManager) : nullptr;
+}
+bool AAutoBattleGameMode::ManagedRequestMatches(FName Awaiting,FName IdProperty,FGuid Id) const
+{
+    if(!bManagedBridgeReady || !IsValid(ManagedRoundManager) || !Id.IsValid())return false;
+    auto Flag=FindFProperty<FBoolProperty>(ManagedRoundManager->GetClass(),Awaiting);
+    auto Key=FindFProperty<FStructProperty>(ManagedRoundManager->GetClass(),IdProperty);
+    return Flag && Key && Flag->GetPropertyValue_InContainer(ManagedRoundManager)
+        && *Key->ContainerPtrToValuePtr<FGuid>(ManagedRoundManager)==Id;
+}
+bool AAutoBattleGameMode::CaptureManagedUnits()
+{
+    auto Records=ParticipantRecords(); if(!Records || !IsValid(BoardManager))return false;
+    const auto Participants=BoardManager->GetUnitsOnBoard();
+    int32 Allies=0,Enemies=0; TArray<FIntegrationRoundParticipant> Next;
+    for(auto Unit:Participants)
+    {
+        if(!IsValid(Unit)||!BattleUnits.Contains(Unit)||!Unit->IsAlive()||Unit->bInCombat||!Unit->bIsDeployed
+            ||!IsValid(Unit->CurrentTile)||Unit->CurrentTile->OccupiedUnit!=Unit)return false;
+        if(Unit->TeamType==EBattleTeam::Player){++Allies;FString Reason;if(!BoardManager->ValidateUnitPlacementState(Unit,Reason))return false;}else ++Enemies;
+        FIntegrationRoundParticipant S;S.Unit=Unit;S.Tile=Unit->CurrentTile;S.Transform=Unit->GetActorTransform();
+        S.HP=Unit->CurrentHP;S.Mana=Unit->CurrentMana;S.Team=Unit->TeamType;S.EncounterId=ManagedEncounterId;Next.Add(S);
+    }
+    if(Allies<1||Allies>MaxBoardUnits||Enemies<1||!BoardManager->SavePlayerFormation())return false;
+    *Records=MoveTemp(Next); bManagedParticipantsRestored=false;
+    for(auto Unit:Participants)Unit->SetCombatRoster(Participants);
+    UE_LOG(LogTemp,Display,TEXT("INTEGRATION_CAPTURE: owner=RoundManager participants=%d benchExcluded=1"),Records->Num());return true;
+}
+bool AAutoBattleGameMode::RestoreManagedUnits()
+{
+    if(bManagedParticipantsRestored)return true;
+    auto Records=ParticipantRecords();if(!Records||Records->IsEmpty()||!IsValid(BoardManager))return false;
+    TSet<ABoardTile*> Tiles;TSet<ABattleUnitBase*> Units;
+    for(const auto& S:*Records)
+    {
+        if(!IsValid(S.Unit)||!BattleUnits.Contains(S.Unit)||!IsValid(S.Tile)||!BoardManager->Tiles.Contains(S.Tile)
+            ||S.Team!=S.Unit->TeamType||S.EncounterId!=ManagedEncounterId||Tiles.Contains(S.Tile)||Units.Contains(S.Unit))return false;
+        Tiles.Add(S.Tile);Units.Add(S.Unit);
+    }
+    for(auto Tile:Tiles)if(IsValid(Tile->OccupiedUnit)&&!Units.Contains(Cast<ABattleUnitBase>(Tile->OccupiedUnit)))return false;
+    // The existing result-phase BoardManager callback restores surviving allies once.
+    if(BoardManager->HasSavedPlayerFormation()||!BoardManager->LastFormationFailureReason.IsEmpty())return false;
+    for(const auto& S:*Records)S.Unit->StopCombat();
+    for(const auto& S:*Records)BoardManager->ReleaseUnitTiles(S.Unit);
+    for(const auto& S:*Records){ if(!S.Unit->ResetForRound())return false; /* Board restoration may refresh the unit preparation rotation; the manager keeps the original encounter transform. */ if(!S.Unit->SetActorTransform(S.Transform,false,nullptr,ETeleportType::TeleportPhysics))return false; }
+    for(const auto& S:*Records)
+    {
+        if(!S.Unit->IsAlive()||S.Unit->bInCombat||S.Unit->CurrentTile!=S.Tile||S.Tile->OccupiedUnit!=S.Unit
+            ||!S.Tile->HasConsistentOccupancy()||!S.Unit->GetActorTransform().Equals(S.Transform,0.1f))return false;
+    }
+    FString Reason;if(!BoardManager->TrySynchronizeBenchOccupancy(Reason))return false;
+    bManagedParticipantsRestored=true;
+    UE_LOG(LogTemp,Display,TEXT("INTEGRATION_RESTORE: ResetForRound=%d sameActors=1 reciprocalTiles=1"),Records->Num());return true;
+}
+void AAutoBattleGameMode::ManagedPreparationRequested(int32 Round, FGuid RequestId)
+{
+    bool Valid = ManagedRequestMatches(TEXT("bAwaitingPreparation"),TEXT("PreparationRequestId"),RequestId) && Round >= 1 && Round <= 5 && (Round == 1 || Round == CurrentRound + 1) && MaxBoardUnits == Round + 1;
+    if (Valid && Round > 1) Valid = RestoreManagedUnits();
+    if (Valid)
+    {
+        CurrentRound = Round; ElapsedCombatTime = 0; RemainingPreparationTime = 0;
+        bBattleResultPending = false; bPreparationActive = true; bPreparationExpiryReported = false; bEncounterReady = true;
+        ChangePhase(EGamePhase::Preparation); LastManagedDeployedCount = -1; RefreshManagedInteraction(true);
+    }
+    UE_LOG(LogTemp, Display, TEXT("MANAGED_PREPARATION: round=%d ready=%d units=%d"), Round, Valid, BattleUnits.Num());
+    CallManaged(TEXT("NotifyRoundPreparationCompleted"), [RequestId, Valid](UFunction* F, uint8* P) {
+        ManagedRoundBridge::Guid(F, P, TEXT("RequestId"), RequestId); ManagedRoundBridge::Bool(F, P, TEXT("bSuccess"), Valid);
+    });
+}
+void AAutoBattleGameMode::ManagedCombatStartRequested(FGuid Encounter, int32 Round)
+{
+    ManagedEncounterId=Encounter;
+    auto PC=Cast<AAutoBattlePlayerController>(UGameplayStatics::GetPlayerController(this,0));
+    if (!bManagedBridgeReady || (PC && PC->IsUnitDragActive()) || Round != CurrentRound || GetManagedRoundPhase() != 2 || CurrentPhase != EGamePhase::Preparation || GetDeployedPlayerCount() < 1 || GetDeployedPlayerCount() > MaxBoardUnits || bManagedUnitDragging || bManagedItemDragging || ManagedRoundBridge::UMGDragging() || !CaptureManagedUnits())
+    { ManagedError(TEXT("Actual combat prerequisites changed during the start request.")); return; }
+    ManagedEncounterId = Encounter; ManagedLastOutcome.Empty(); bManagedStartAuthorized = true;
+    StartCombatPhase(); bManagedStartAuthorized = false;
+    UE_LOG(LogTemp, Display, TEXT("MANAGED_COMBAT: round=%d encounter=%s units=%d actualAI=1"), Round, *Encounter.ToString(), BattleUnits.Num());
+}
+void AAutoBattleGameMode::ManagedCombatStopRequested(FGuid Encounter, bool TimedOut)
+{
+    if (!bManagedBridgeReady || Encounter != ManagedEncounterId) return;
+    for (ABattleUnitBase* Unit : BattleUnits) if (IsValid(Unit)) Unit->StopCombat();
+    if (TimedOut) ManagedLastOutcome = TEXT("TimedOut");
+    bBattleResultPending = true; ChangePhase(EGamePhase::RoundClear);
+    if(BoardManager->HasSavedPlayerFormation() || !BoardManager->LastFormationFailureReason.IsEmpty()) ManagedError(TEXT("Existing formation restoration failed"));
+}
+void AAutoBattleGameMode::ManagedResolutionRequested(FGuid Encounter, bool TimedOut)
+{
+    if (!bManagedBridgeReady || Encounter != ManagedEncounterId || GetManagedRoundPhase() != 3) return;
+    UE_LOG(LogTemp, Display, TEXT("MANAGED_SETTLEMENT: round=%d outcome=%s timedOut=%d testAdvanceRegardless=1"), CurrentRound, *ManagedLastOutcome, TimedOut);
+    CallManaged(TEXT("NotifyCombatResolutionCompleted"), [Encounter](UFunction* F, uint8* P) { ManagedRoundBridge::Guid(F, P, TEXT("CompletedEncounterId"), Encounter); });
+    CallManaged(TEXT("ConfirmProgressionToReward"), [Encounter](UFunction* F, uint8* P) { ManagedRoundBridge::Guid(F, P, TEXT("CompletedEncounterId"), Encounter); });
+}
+void AAutoBattleGameMode::ManagedFinalPolicyRequested(FGuid Encounter)
+{
+    if (!bManagedBridgeReady || Encounter != ManagedEncounterId || CurrentRound != 5) return;
+    if(!RestoreManagedUnits()){ManagedError(TEXT("Final participant reset failed; progression blocked"));return;}
+    // Keep the final Reward stage; the explicitly enabled temporary adapter skips it.
+    CallManaged(TEXT("ResolveFinalRoundPolicy"), [Encounter](UFunction* F, uint8* P) {
+        ManagedRoundBridge::Guid(F, P, TEXT("CompletedEncounterId"), Encounter); ManagedRoundBridge::Bool(F, P, TEXT("bGrantFinalReward"), true);
+    });
+}
+void AAutoBattleGameMode::ManagedPhaseChanged(uint8 Previous, uint8 Current)
+{
+    static const TCHAR* Names[] = {TEXT("Initializing"), TEXT("Preparation"), TEXT("Combat"), TEXT("ResolvingCombat"), TEXT("Reward"), TEXT("Finished")};
+    UE_LOG(LogTemp, Display, TEXT("MANAGED_PHASE: round=%d %s -> %s outcome=%s"), CurrentRound, Previous < 6 ? Names[Previous] : TEXT("Invalid"), Current < 6 ? Names[Current] : TEXT("Invalid"), *ManagedLastOutcome);
+    if (Current == 5)
+    {
+        if(!RestoreManagedUnits()){ManagedError(TEXT("Final reset failed"));return;}
+        bManagedTestFinished = true; ChangePhase(EGamePhase::RoundClear); bEncounterReady = false; bPreparationActive = false;
+        StatusMessage = TEXT("TEST Finished: five rounds completed. This is not a victory/defeat policy.");
+        UE_LOG(LogTemp, Display, TEXT("MANAGED_FINISHED: rounds=%d sameUnits=%d noR6=1"), CurrentRound, BattleUnits.Num());
+        if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 3600.f, FColor::Green, TEXT("MAINMAP TEST: R5 Finished - 5 rounds completed"));
+    }
+}
+void AAutoBattleGameMode::ManagedAvailabilityChanged(bool Allowed, FText Message)
+{
+    if (GetManagedRoundPhase() == 1) StatusMessage = Allowed ? FString::Printf(TEXT("R%d ready. Press the existing START COMBAT button."), CurrentRound) : Message.ToString();
+}
+void AAutoBattleGameMode::ManagedConfigurationError(FText Message) { ManagedError(Message.ToString()); }
+void AAutoBattleGameMode::EndPlay(const EEndPlayReason::Type Reason)
+{
+    if (bEnableMainMapRoundTest && IsValid(ManagedRoundManager))
+    {
+        GetWorldTimerManager().ClearAllTimersForObject(ManagedRoundManager);
+        ManagedRoundManager->Destroy();
+    }
+    Super::EndPlay(Reason);
 }

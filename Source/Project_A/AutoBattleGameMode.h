@@ -5,6 +5,22 @@
 #include "AutoBattleGameMode.generated.h"
 
 class ABoardManager;
+class ABoardTile;
+
+/** Per-encounter record owned by BP_RoundManager, never a second live roster. */
+USTRUCT(BlueprintType)
+struct FIntegrationRoundParticipant
+{
+    GENERATED_BODY()
+    UPROPERTY(BlueprintReadOnly) TObjectPtr<ABattleUnitBase> Unit = nullptr;
+    UPROPERTY(BlueprintReadOnly) TObjectPtr<ABoardTile> Tile = nullptr;
+    UPROPERTY(BlueprintReadOnly) FTransform Transform;
+    UPROPERTY(BlueprintReadOnly) float HP = 0;
+    UPROPERTY(BlueprintReadOnly) float Mana = 0;
+    UPROPERTY(BlueprintReadOnly) EBattleTeam Team = EBattleTeam::Player;
+    UPROPERTY(BlueprintReadOnly) FGuid EncounterId;
+};
+
 UENUM(BlueprintType)
 enum class EGamePhase : uint8
 {
@@ -19,12 +35,12 @@ USTRUCT(BlueprintType)
 struct FUnitSpawnInfo
 {
     GENERATED_BODY()
-    // BPÀÇ Spawn Actor¿¡¼­ »ç¿ëÇÒ Å¬·¡½º. »ı¼ºÇÏ·Á¸é ¹İµå½Ã ÁöÁ¤ÇØ¾ß ÇÑ´Ù.
+    // BPì˜ Spawn Actorì—ì„œ ì‚¬ìš©í•  í´ë˜ìŠ¤. ìƒì„±í•˜ë ¤ë©´ ë°˜ë“œì‹œ ì§€ì •í•´ì•¼ í•œë‹¤.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Spawn")
     TSubclassOf<ABattleUnitBase> UnitClass;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Spawn")
     EBattleTeam Team = EBattleTeam::Player;
-    // ÀûÀº Àû Áø¿µ Å¸ÀÏ¿¡¼­ ½ÃÀÛÇØ¾ß ÇÑ´Ù. ¾Æ±ºÀº ´ë±â ±¸¿ª¿¡¼­ ½ÃÀÛÇÒ ¼ö ÀÖ´Ù.
+    // ì ì€ ì  ì§„ì˜ íƒ€ì¼ì—ì„œ ì‹œì‘í•´ì•¼ í•œë‹¤. ì•„êµ°ì€ ëŒ€ê¸° êµ¬ì—­ì—ì„œ ì‹œì‘í•  ìˆ˜ ìˆë‹¤.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Spawn")
     bool bStartOnBoard = false;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Spawn", meta=(ClampMin="0", EditCondition="bStartOnBoard"))
@@ -43,7 +59,22 @@ public:
     virtual void Tick(float DeltaSeconds) override;
 protected:
     virtual void BeginPlay() override;
+    virtual void EndPlay(const EEndPlayReason::Type Reason) override;
 public:
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Round|MainMap Test")
+    bool bEnableMainMapRoundTest = false;
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Round|MainMap Test")
+    TObjectPtr<AActor> ManagedRoundManager = nullptr;
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Round|MainMap Test")
+    bool bManagedBridgeReady = false;
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Round|MainMap Test")
+    bool bManagedTestFinished = false;
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Round|MainMap Test")
+    FString ManagedLastOutcome;
+    UFUNCTION(BlueprintCallable, Category="Round|MainMap Test")
+    void SetManagedDragState(bool bUnitDragging, bool bItemDragging);
+    UFUNCTION(BlueprintPure, Category="Round|MainMap Test")
+    int32 GetManagedRoundPhase() const;
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Game")
     EGamePhase CurrentPhase = EGamePhase::Preparation;
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Round")
@@ -58,7 +89,7 @@ public:
     float PreparationDuration = 30.0f;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Battle Setup", meta=(ClampMin="1"))
     float CombatTimeLimit = 120.0f;
-    // ÀÚµ¿ °è»êÇÑ À¯´Ö ´ë±â À§Ä¡¿¡ Ãß°¡·Î Àû¿ëÇÒ ÀÌµ¿·®ÀÌ´Ù.
+    // ìë™ ê³„ì‚°í•œ ìœ ë‹› ëŒ€ê¸° ìœ„ì¹˜ì— ì¶”ê°€ë¡œ ì ìš©í•  ì´ë™ëŸ‰ì´ë‹¤.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Battle Setup")
     FVector WaitingAreaOffset = FVector::ZeroVector;
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Game")
@@ -67,10 +98,10 @@ public:
     float ElapsedCombatTime = 0;
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Game")
     bool bEncounterReady = false;
-    // ±×·¡ÇÁ¿¡¼­ ÁØºñ ´Ü°è¸¦ ½ÃÀÛÇÑ µÚ¿¡¸¸ À¯´ÖÀ» ¹èÄ¡ÇÒ ¼ö ÀÖ´Ù.
+    // ê·¸ë˜í”„ì—ì„œ ì¤€ë¹„ ë‹¨ê³„ë¥¼ ì‹œì‘í•œ ë’¤ì—ë§Œ ìœ ë‹›ì„ ë°°ì¹˜í•  ìˆ˜ ìˆë‹¤.
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Game")
     bool bPreparationActive = false;
-    // ÀüÅõ °á°ú°¡ °¨ÁöµÇ¸é ÀüÅõ¸¦ ¸ØÃß°í BP ±×·¡ÇÁÀÇ °á°ú Ã³¸®¸¦ ±â´Ù¸°´Ù.
+    // ì „íˆ¬ ê²°ê³¼ê°€ ê°ì§€ë˜ë©´ ì „íˆ¬ë¥¼ ë©ˆì¶”ê³  BP ê·¸ë˜í”„ì˜ ê²°ê³¼ ì²˜ë¦¬ë¥¼ ê¸°ë‹¤ë¦°ë‹¤.
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Game")
     bool bBattleResultPending = false;
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Game")
@@ -83,13 +114,13 @@ public:
     FGamePhaseChangedEvent OnPhaseChanged;
 
 
-    // À¯´Ö »ı¼º ¹İº¹Àº BP¿¡¼­ ±¸¼ºÇÏ°í, ¾Æ·¡ ÇÔ¼öµéÀº µî·Ï°ú ¹èÄ¡ µî °øÅë »óÅÂ¸¦ °ü¸®ÇÑ´Ù.
+    // ìœ ë‹› ìƒì„± ë°˜ë³µì€ BPì—ì„œ êµ¬ì„±í•˜ê³ , ì•„ë˜ í•¨ìˆ˜ë“¤ì€ ë“±ë¡ê³¼ ë°°ì¹˜ ë“± ê³µí†µ ìƒíƒœë¥¼ ê´€ë¦¬í•œë‹¤.
     UFUNCTION(BlueprintCallable, Category="Game|Unit Setup") bool BeginEncounterSetup();
     UFUNCTION(BlueprintCallable, Category="Game|Unit Setup") bool RegisterBattleUnit(ABattleUnitBase* Unit);
     UFUNCTION(BlueprintCallable, Category="Game|Unit Setup")
     bool MoveUnitToWaitingArea(ABattleUnitBase* Unit, int32 WaitingIndex, int32 WaitingCount);
     UFUNCTION(BlueprintCallable, Category="Game|Unit Setup") bool CompleteEncounterSetup();
-    // ÁØºñ ´Ü°è¿¡¼­ µî·ÏµÈ À¯´ÖÀ» Á¤¸®ÇÑ´Ù. ÀÚµ¿ Àç»ı¼ºÀÌ³ª Board Ready ÀÌº¥Æ® È£ÃâÀº ÇÏÁö ¾Ê´Â´Ù.
+    // ì¤€ë¹„ ë‹¨ê³„ì—ì„œ ë“±ë¡ëœ ìœ ë‹›ì„ ì •ë¦¬í•œë‹¤. ìë™ ì¬ìƒì„±ì´ë‚˜ Board Ready ì´ë²¤íŠ¸ í˜¸ì¶œì€ í•˜ì§€ ì•ŠëŠ”ë‹¤.
     UFUNCTION(BlueprintCallable, Category="Game|Unit Setup") void CancelEncounterSetup();
 
     UFUNCTION(BlueprintCallable, Category="Game|Flow") void RequestCombatStart();
@@ -105,8 +136,8 @@ public:
     UFUNCTION(BlueprintPure, Category="Game") int32 GetDeployedPlayerCount() const;
     UFUNCTION(BlueprintPure, Category="Game") int32 GetAliveTeamCount(EBattleTeam Team) const;
 protected:
-    // GameMode BP¿¡¼­ ¾Æ·¡ ÀÌº¥Æ®¸¦ ±¸ÇöÇÏ¿© ´Ü°èº° °ÔÀÓ ÁøÇàÀ» ¿¬°áÇÑ´Ù.
-    // C++ ±âº» ÁøÇàÀº ¾ø´Ù. BP¿¡¼­ ÇÊ¿äÇÑ ÀÌº¥Æ®¸¦ ¿¬°áÇØ¾ß ´ÙÀ½ ´Ü°è·Î ÁøÇàÇÑ´Ù.
+    // GameMode BPì—ì„œ ì•„ë˜ ì´ë²¤íŠ¸ë¥¼ êµ¬í˜„í•˜ì—¬ ë‹¨ê³„ë³„ ê²Œì„ ì§„í–‰ì„ ì—°ê²°í•œë‹¤.
+    // C++ ê¸°ë³¸ ì§„í–‰ì€ ì—†ë‹¤. BPì—ì„œ í•„ìš”í•œ ì´ë²¤íŠ¸ë¥¼ ì—°ê²°í•´ì•¼ ë‹¤ìŒ ë‹¨ê³„ë¡œ ì§„í–‰í•œë‹¤.
     UFUNCTION(BlueprintImplementableEvent, Category="Game|Flow", meta=(DisplayName="Board Ready"))
     void ReceiveBoardReady();
 
@@ -122,11 +153,38 @@ protected:
     UFUNCTION(BlueprintImplementableEvent, Category="Game|Flow", meta=(DisplayName="Restart Requested"))
     void ReceiveRestartRequested();
 
-    // ´Ü°è º¯°æ¿¡ ¸ÂÃç À§Á¬ »ı¼º°ú Ç¥½Ã µîÀ» ¿¬°áÇÏ´Â ¼±ÅÃÀû ÀÌº¥Æ®´Ù. ¿©±â¼­ °ÔÀÓ ´Ü°è¸¦ ÀüÈ¯ÇÏÁö ¾Ê´Â´Ù.
+    // ë‹¨ê³„ ë³€ê²½ì— ë§ì¶° ìœ„ì ¯ ìƒì„±ê³¼ í‘œì‹œ ë“±ì„ ì—°ê²°í•˜ëŠ” ì„ íƒì  ì´ë²¤íŠ¸ë‹¤. ì—¬ê¸°ì„œ ê²Œì„ ë‹¨ê³„ë¥¼ ì „í™˜í•˜ì§€ ì•ŠëŠ”ë‹¤.
     UFUNCTION(BlueprintImplementableEvent, Category="Game|Flow", meta=(DisplayName="Game Phase Changed"))
     void ReceiveGamePhaseChanged(EGamePhase Phase);
 
 private:
+    bool InitializeManagedRoundBridge();
+    bool CallManaged(FName FunctionName, TFunctionRef<void(UFunction*, uint8*)> Fill);
+    bool CallManaged(FName FunctionName);
+    bool BindManagedEvent(FName EventName, FName HandlerName);
+    bool CaptureManagedUnits();
+    bool RestoreManagedUnits();
+    void RefreshManagedInteraction(bool bForce = false);
+    void ManagedError(const FString& Message);
+    UFUNCTION() void ManagedDeploymentRequested(int32 Limit, int32 LimitRoundNumber, FGuid RequestId);
+    UFUNCTION() void ManagedPreparationRequested(int32 NextRoundNumber, FGuid RequestId);
+    UFUNCTION() void ManagedCombatStartRequested(FGuid EncounterId, int32 RoundNumber);
+    UFUNCTION() void ManagedCombatStopRequested(FGuid EncounterId, bool bTimedOut);
+    UFUNCTION() void ManagedResolutionRequested(FGuid EncounterId, bool bTimedOut);
+    UFUNCTION() void ManagedFinalPolicyRequested(FGuid EncounterId);
+    UFUNCTION() void ManagedPhaseChanged(uint8 Previous, uint8 Current);
+    UFUNCTION() void ManagedAvailabilityChanged(bool bAllowed, FText Message);
+    UFUNCTION() void ManagedConfigurationError(FText Message);
+    TArray<FIntegrationRoundParticipant>* ParticipantRecords() const;
+    bool ManagedRequestMatches(FName Awaiting, FName IdProperty, FGuid Id) const;
+    bool bManagedParticipantsRestored = true;
+    FGuid ManagedEncounterId;
+    bool bManagedStartAuthorized = false;
+    bool bManagedUnitDragging = false;
+    bool bManagedItemDragging = false;
+    int32 LastManagedDeployedCount = -1;
+    bool bLastManagedUnitDragging = false;
+    bool bLastManagedItemDragging = false;
     void InitializeEncounter();
     void ReportBattleResult(EGamePhase Result);
     EGamePhase PendingBattleResult = EGamePhase::GameOver;
