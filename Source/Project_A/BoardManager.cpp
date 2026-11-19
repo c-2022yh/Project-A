@@ -1204,6 +1204,7 @@ bool ABoardManager::BuildPath(ABattleUnitBase* Unit, ABattleUnitBase* Target, bo
         || Unit->CurrentTile->OccupiedUnit != Unit || Target->CurrentTile->OccupiedUnit != Target) return false;
     ABoardTile* Start = Unit->CurrentTile;
     ABoardTile* Goal = nullptr;
+    const FVector TargetLocation = Target->CurrentTile->GetActorLocation();
     TArray<ABoardTile*> Queue; Queue.Add(Start);
     TMap<ABoardTile*, ABoardTile*> Parent; Parent.Add(Start, nullptr);
     // 모든 간선 비용이 같은 30칸 보드이므로 BFS로 충분하다. 출발 칸은 점유한 채 탐색한다.
@@ -1212,7 +1213,14 @@ bool ABoardManager::BuildPath(ABattleUnitBase* Unit, ABattleUnitBase* Target, bo
         ABoardTile* Current = Queue[Head];
         if (Current != Target->CurrentTile && ABattleUnitBase::HexDistance(Current, Target->CurrentTile) <= FMath::Max(0, Unit->FinalStats.AttackRange))
         { Goal = Current; break; }
-        for (ABoardTile* Neighbor : GetNeighbors(Current))
+        TArray<ABoardTile*> Neighbors = GetNeighbors(Current);
+        // BFS still chooses the fewest steps. When routes tie, try the step pointing closer to the enemy first.
+        Neighbors.StableSort([&TargetLocation](const ABoardTile& Left, const ABoardTile& Right)
+        {
+            return FVector::DistSquared2D(Left.GetActorLocation(), TargetLocation)
+                < FVector::DistSquared2D(Right.GetActorLocation(), TargetLocation);
+        });
+        for (ABoardTile* Neighbor : Neighbors)
         {
             if (Parent.Contains(Neighbor) || Neighbor->bBlocksMovement || Neighbor == Target->CurrentTile) continue;
             if (!bIgnoreUnits && ((IsValid(Neighbor->OccupiedUnit) && Neighbor->OccupiedUnit != Unit)

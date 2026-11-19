@@ -357,6 +357,20 @@ bool FBoardPathTest::RunTest(const FString& Parameters)
     TestTrue(TEXT("Terrain obstacle has an alternate path"), F.Board->FindPathToAttackRange(A, E, Path));
     TestFalse(TEXT("Detour excludes blocked tile"), Path.Contains(Blocked));
     Blocked->bBlocksMovement = false;
+
+    ABattleUnitBase* AngledEnemy = F.Spawn(EBattleTeam::Enemy, F.Board->GetTileByHex(1, 3));
+    ABoardTile* Forward = F.Board->GetTileByHex(0, 1);
+    ABoardTile* Side = F.Board->GetTileByHex(1, 0);
+    if (!AngledEnemy || !Forward || !Side) { AddError(TEXT("Could not set up equal-length approach routes")); return false; }
+    if (!TestTrue(TEXT("Angled enemy is reachable"), F.Board->FindPathToAttackRange(A, AngledEnemy, Path))) return false;
+    TestEqual(TEXT("Approach does not add steps"), Path.Num(), 3);
+    if (!Path.IsEmpty()) TestTrue(TEXT("Prefer the step that points toward the enemy"), Path[0] == Forward);
+    Forward->bBlocksMovement = true;
+    if (!TestTrue(TEXT("Side approach remains available"), F.Board->FindPathToAttackRange(A, AngledEnemy, Path))) return false;
+    TestEqual(TEXT("Side approach is equally short"), Path.Num(), 3);
+    if (!Path.IsEmpty()) TestTrue(TEXT("Use the side only when the forward step is blocked"), Path[0] == Side);
+    Forward->bBlocksMovement = false;
+
     for (ABoardTile* Tile : F.Board->Tiles) if (Tile->Row == 2) Tile->bBlocksMovement = true;
     A->StartCombat(); E->StartCombat(); ABoardTile* Next = nullptr;
     TestTrue(TEXT("Terrain cut is unreachable"), F.Board->TryReserveNextStep(A, E, 1, Next) == EUnitPathResult::Unreachable);
