@@ -1577,6 +1577,31 @@ FUnitProjectileView ABattleUnitBase::MakeProjectileView(const FPendingProjectile
     return View;
 }
 
+FVector ABattleUnitBase::GetBasicProjectileLaunchLocation(const FVector& BodyFallback)
+{
+    const FUnitProjectileOrigin& Origin = Definition.BasicAttack.ProjectileOrigin;
+    const FVector Offset = Origin.LocalOffset.ContainsNaN() ? FVector::ZeroVector : Origin.LocalOffset;
+    if (Origin.Component == EUnitProjectileOriginComponent::Body && Origin.SocketName.IsNone())
+        return BodyFallback + GetActorQuat().RotateVector(Offset);
+
+    USceneComponent* Component = Body;
+    if (Origin.Component != EUnitProjectileOriginComponent::Body)
+    {
+        UStaticMeshComponent* Weapon = Origin.Component == EUnitProjectileOriginComponent::MainHand ? MainHand : OffHand;
+        Component = IsValid(Weapon) && Weapon->GetStaticMesh() && Weapon->IsVisible() ? Weapon : nullptr;
+    }
+    if (!IsValid(Component) || (!Origin.SocketName.IsNone() && !Component->DoesSocketExist(Origin.SocketName)))
+    {
+        LastValidationMessage = FString::Printf(TEXT("Basic projectile origin unavailable: %s. Using body launch point."),
+            *Origin.SocketName.ToString());
+        return BodyFallback;
+    }
+    const FTransform Transform = Origin.SocketName.IsNone()
+        ? Component->GetComponentTransform() : Component->GetSocketTransform(Origin.SocketName);
+    const FVector Location = Transform.TransformPosition(Offset);
+    return Location.ContainsNaN() ? BodyFallback : Location;
+}
+
 bool ABattleUnitBase::LaunchProjectile(FPendingProjectile Projectile)
 {
     if (!Projectile.Target.IsValid() || Positive(Projectile.Speed) <= 0.f || Positive(Projectile.Lifetime) <= 0.f)
@@ -1584,7 +1609,8 @@ bool ABattleUnitBase::LaunchProjectile(FPendingProjectile Projectile)
         LastValidationMessage = TEXT("Projectile needs a valid target, positive speed and lifetime."); return false;
     }
     Projectile.Id = ++ActionSequence; Projectile.TargetGeneration = Projectile.Target->CombatGeneration;
-    Projectile.Position = GetActorLocation() + FVector(0, 0, GetHealthBarHeight() * 0.5f);
+    const FVector BodyLaunchPoint = GetActorLocation() + FVector(0, 0, GetHealthBarHeight() * 0.5f);
+    Projectile.Position = Projectile.bBasic ? GetBasicProjectileLaunchLocation(BodyLaunchPoint) : BodyLaunchPoint;
     const FVector Goal = Projectile.Target->GetActorLocation() + FVector(0, 0, Projectile.Target->GetHealthBarHeight() * 0.5f);
     const FVector Direction = Goal - Projectile.Position;
     if (!Direction.IsNearlyZero()) Projectile.Rotation = Direction.Rotation();
@@ -1647,6 +1673,7 @@ void ABattleUnitBase::TickProjectiles(float Delta)
 #include "Skills/SniperPrecisionShotSkill.h"
 #include "Skills/ShamanWeakeningCurseSkill.h"
 #include "Engine/StaticMesh.h"
+#include "Engine/StaticMeshSocket.h"
 #include "Materials/Material.h"
 namespace UnitCombatTests
 {
@@ -2482,6 +2509,9 @@ bool FUnitProjectileViewTest::RunTest(const FString& Parameters)
     Data.BasicAttack.ProjectileVisual.Material = BasicMaterial;
     Data.BasicAttack.ProjectileVisual.Scale = FVector(0.15f);
     Data.BasicAttack.ProjectileVisual.Rotation = FRotator(0.f, -90.f, 0.f);
+    Data.BasicAttack.ProjectileOrigin.Component = EUnitProjectileOriginComponent::OffHand;
+    Data.BasicAttack.ProjectileOrigin.SocketName = TEXT("Muzzle");
+    Data.BasicAttack.ProjectileOrigin.LocalOffset = FVector(10.f, 0.f, 0.f);
     FUnitSkillDefinition& Skill = Data.TestSkills[0];
     Skill.SkillId = TEXT("Fireball"); Skill.Target = EUnitSkillTarget::CurrentEnemy;
     Skill.bProjectile = true; Skill.bUseAnimNotify = true;
@@ -2493,6 +2523,19 @@ bool FUnitProjectileViewTest::RunTest(const FString& Parameters)
     ABattleUnitBase* A = F.Spawn(TEXT("Mage"), Data, EBattleTeam::Player, 0);
     ABattleUnitBase* B = F.Spawn(TEXT("Enemy"), FFixture::UnitData(), EBattleTeam::Enemy, 1);
     if (!A || !B) return false;
+    UStaticMesh* WeaponMesh = DuplicateObject(BasicMesh, F.World);
+    UStaticMeshSocket* Muzzle = NewObject<UStaticMeshSocket>(WeaponMesh);
+    Muzzle->SocketName = TEXT("Muzzle");
+    Muzzle->RelativeLocation = FVector(24.f, 0.f, 35.f);
+    Muzzle->RelativeRotation = FRotator(0.f, 90.f, 0.f);
+    Muzzle->RelativeScale = FVector::OneVector;
+    WeaponMesh->AddSocket(Muzzle);
+    A->OffHand->SetStaticMesh(WeaponMesh);
+    A->OffHand->SetRelativeLocation(FVector(20.f, -15.f, 30.f));
+    A->OffHand->SetVisibility(true);
+    A->MainHand->SetStaticMesh(WeaponMesh);
+    A->MainHand->SetRelativeLocation(FVector(45.f, 15.f, 20.f));
+    A->MainHand->SetVisibility(true);
     A->StartCombat(); B->StartCombat(); A->CurrentTarget = B;
     TestTrue(TEXT("Basic attack starts"), A->TryBasicAttack());
     TestTrue(TEXT("Basic projectile launches"), A->CommitAttackHit(A->ActiveActionId));
@@ -2504,6 +2547,19 @@ bool FUnitProjectileViewTest::RunTest(const FString& Parameters)
     if (!TestEqual(TEXT("Basic and skill shots coexist"), A->Projectiles.Num(), 2)) return false;
     const FUnitProjectileView Basic = A->MakeProjectileView(A->Projectiles[0]);
     const FUnitProjectileView Fireball = A->MakeProjectileView(A->Projectiles[1]);
+    const FVector BodyOrigin = A->GetActorLocation() + FVector(0, 0, A->GetHealthBarHeight() * 0.5f);
+    const FVector MeshLocalOrigin = FVector(24.f, 10.f, 35.f); // 소켓의 +X 보정은 회전 후 메시 +Y다.
+    TestTrue(TEXT("Basic shot starts at the off-hand socket plus its rotated local offset"),
+        Basic.Position.Equals(A->OffHand->GetComponentTransform().TransformPosition(MeshLocalOrigin)));
+    TestTrue(TEXT("Skill projectile keeps the original body launch point"), Fireball.Position.Equals(BodyOrigin));
+    FUnitProjectileOrigin& Origin = A->Definition.BasicAttack.ProjectileOrigin;
+    Origin.Component = EUnitProjectileOriginComponent::MainHand;
+    TestTrue(TEXT("Main hand origin selects the same named socket on a different component"),
+        A->GetBasicProjectileLaunchLocation(BodyOrigin).Equals(A->MainHand->GetComponentTransform().TransformPosition(MeshLocalOrigin)));
+    Origin.SocketName = TEXT("MissingMuzzle");
+    TestTrue(TEXT("A missing socket falls back to the body"), A->GetBasicProjectileLaunchLocation(BodyOrigin).Equals(BodyOrigin));
+    Origin = FUnitProjectileOrigin{};
+    TestTrue(TEXT("Unset origin preserves the legacy position"), A->GetBasicProjectileLaunchLocation(BodyOrigin).Equals(BodyOrigin));
     TestTrue(TEXT("Basic shot flag and empty skill ID"), Basic.bBasicAttack && Basic.SkillId.IsNone());
     TestTrue(TEXT("Skill shot flag and actual DT skill ID"), !Fireball.bBasicAttack && Fireball.SkillId == TEXT("Fireball"));
     TestTrue(TEXT("Basic shot uses basic attack visual data"), Basic.Visual.Mesh == BasicMesh && Basic.Visual.Material == BasicMaterial && Basic.Visual.Scale.Equals(FVector(0.15f)));

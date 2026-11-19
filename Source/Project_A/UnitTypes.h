@@ -103,6 +103,28 @@ struct PROJECT_A_API FUnitProjectileVisualDefinition
     UPROPERTY(EditAnywhere, BlueprintReadOnly) FRotator Rotation = FRotator::ZeroRotator;
 };
 
+UENUM(BlueprintType)
+enum class EUnitProjectileOriginComponent : uint8
+{
+    Body,
+    MainHand,
+    OffHand
+};
+
+USTRUCT(BlueprintType)
+struct PROJECT_A_API FUnitProjectileOrigin
+{
+    GENERATED_BODY()
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, meta=(ToolTip="발사 소켓이 들어 있는 컴포넌트. 장비 메시의 소켓은 Main Hand 또는 Off Hand를 고른다."))
+    EUnitProjectileOriginComponent Component = EUnitProjectileOriginComponent::Body;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, meta=(ToolTip="발사점 소켓. None이면 무기 메시 원점, Body에서는 기존 몸통 발사점을 사용한다."))
+    FName SocketName = NAME_None;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, meta=(ToolTip="발사점 기준 로컬 위치 보정. 소켓을 지정하면 소켓의 축과 크기를 따른다."))
+    FVector LocalOffset = FVector::ZeroVector;
+};
+
 USTRUCT(BlueprintType)
 struct PROJECT_A_API FUnitBasicAttackDefinition
 {
@@ -120,6 +142,7 @@ struct PROJECT_A_API FUnitBasicAttackDefinition
     UPROPERTY(EditAnywhere, BlueprintReadOnly) float ProjectileSpeed = 1000.f;
     UPROPERTY(EditAnywhere, BlueprintReadOnly) float ProjectileMaxLifetime = 10.f;
     UPROPERTY(EditAnywhere, BlueprintReadOnly) FUnitProjectileVisualDefinition ProjectileVisual;
+    UPROPERTY(EditAnywhere, BlueprintReadOnly) FUnitProjectileOrigin ProjectileOrigin;
 };
 
 UENUM(BlueprintType)

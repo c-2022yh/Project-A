@@ -328,4 +328,5 @@ private:
     void ExecuteSkillPayload(UUnitSkillBase* Instance, ABattleUnitBase* Target, int32 ActionId);
     TArray<float> CalculateEffectValues(const FUnitSkillDefinition& Skill) const;
     bool LaunchProjectile(FPendingProjectile Projectile);
+    FVector GetBasicProjectileLaunchLocation(const FVector& BodyFallback);
 };
