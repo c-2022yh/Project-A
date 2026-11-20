@@ -5,7 +5,7 @@
 
 class UMaterialInterface;
 
-// 견습 용사의 처치 관여 기록과 진화한 무기 외형을 담당한다.
+// 견습 용사의 처치 관여 기록과 진화 외형을 담당한다.
 UCLASS(Blueprintable, HideCategories=(Skill))
 class PROJECT_A_API UHeroGrowthPassiveSkill : public UUnitPassiveSkill
 {
@@ -15,6 +15,8 @@ public:
 
     UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Hero Growth", meta=(ClampMin="0", ToolTip="진화에 필요한 누적 처치 관여 수. 0이면 자동 진화를 사용하지 않는다."))
     int32 RequiredParticipations = 0;
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Hero Growth|Visuals", meta=(ToolTip="진화 후 몸 메시. 기본 몸 메시와 같은 스켈레톤을 사용해야 한다."))
+    TObjectPtr<USkeletalMesh> EvolvedSkeletalMesh = nullptr;
     UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Hero Growth|Visuals")
     TObjectPtr<UMaterialInterface> EvolvedWeaponMaterial = nullptr;
     UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Hero Growth|Visuals", meta=(ClampMin="0"))
@@ -34,6 +36,7 @@ public:
     virtual bool CanRestorePersistentProgress(const FUnitSkillProgress& State) const override;
     virtual bool RestorePersistentProgress(const FUnitSkillProgress& State) override;
     virtual bool AdvancePreparation() override;
+    virtual USkeletalMesh* GetPersistentBodyMeshOverride() const override;
     virtual void ApplyPersistentVisuals() override;
     virtual bool MergePersistentProgress(const FUnitSkillProgress& Kept, const FUnitSkillProgress& Material, FUnitSkillProgress& Out) const override;
     virtual void OnKillParticipation(ABattleUnitBase* DefeatedUnit) override;

@@ -7,6 +7,9 @@
 #include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "Engine/DataTable.h"
+#include "Engine/SkeletalMesh.h"
+#include "Animation/Skeleton.h"
+#include "Components/SkeletalMeshComponent.h"
 
 namespace HeroStrikeTests
 {
@@ -89,6 +92,15 @@ bool FHeroStrikeEvolutionTest::RunTest(const FString& Parameters)
     auto* Growth = Cast<UHeroGrowthPassiveSkill>(F.Hero->GetEquippedSkills()[1]);
     if (!TestNotNull(TEXT("Growth skill"), Growth)) return false;
     Growth->RequiredParticipations = 1;
+    USkeleton* Skeleton = NewObject<USkeleton>(F.World);
+    USkeletalMesh* ApprenticeMesh = NewObject<USkeletalMesh>(F.World);
+    USkeletalMesh* EvolvedMesh = NewObject<USkeletalMesh>(F.World);
+    ApprenticeMesh->SetSkeleton(Skeleton);
+    EvolvedMesh->SetSkeleton(Skeleton);
+    F.Hero->Definition.Visuals.SkeletalMesh = ApprenticeMesh;
+    Growth->EvolvedSkeletalMesh = EvolvedMesh;
+    F.Hero->ApplyVisuals();
+    TestTrue(TEXT("The basic mesh is used before evolution"), F.Hero->Body->GetSkeletalMeshAsset() == ApprenticeMesh);
 
     TestTrue(TEXT("Arm normal strike"), F.Arm());
     TestTrue(TEXT("Normal strike hits"), F.Hit());
@@ -106,6 +118,16 @@ bool FHeroStrikeEvolutionTest::RunTest(const FString& Parameters)
     if (!TestTrue(TEXT("Hero resets into preparation"), F.Hero->ResetForRound())
         || !TestTrue(TEXT("Enemy resets into preparation"), F.Enemy->ResetForRound())) return false;
     TestTrue(TEXT("Preparation advances evolution"), Growth->bEvolved);
+    TestTrue(TEXT("Preparation applies the evolved mesh"), F.Hero->Body->GetSkeletalMeshAsset() == EvolvedMesh);
+    TestTrue(TEXT("The source visual definition still holds the apprentice mesh"), F.Hero->Definition.Visuals.SkeletalMesh == ApprenticeMesh);
+    USkeletalMesh* Incompatible = NewObject<USkeletalMesh>(F.World);
+    Incompatible->SetSkeleton(NewObject<USkeleton>(F.World));
+    Growth->EvolvedSkeletalMesh = Incompatible;
+    F.Hero->ApplyVisuals();
+    TestTrue(TEXT("An incompatible override falls back to the basic mesh"), F.Hero->Body->GetSkeletalMeshAsset() == ApprenticeMesh);
+    Growth->EvolvedSkeletalMesh = EvolvedMesh;
+    F.Hero->ApplyVisuals();
+    TestTrue(TEXT("Visual refresh restores the evolved mesh"), F.Hero->Body->GetSkeletalMeshAsset() == EvolvedMesh);
     TestFalse(TEXT("Repeated preparation does not evolve again"), F.Hero->PrepareSkillsForRound());
 
     F.Hero->StartCombat(); F.Enemy->StartCombat();

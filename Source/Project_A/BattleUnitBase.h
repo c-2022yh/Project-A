@@ -315,7 +315,7 @@ private:
     void TickTileImpacts(float Delta);
     void TickProjectiles(float Delta);
     void TickAction(float Delta);
-    void Think(float Delta);
+    void Think();
     void FindTarget();
     bool IsInRange(const ABattleUnitBase* Target, int32 Range) const;
     ABattleUnitBase* SelectSkillTarget(const FUnitSkillDefinition& Skill) const;

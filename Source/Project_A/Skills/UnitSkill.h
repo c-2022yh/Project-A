@@ -44,6 +44,7 @@ public:
     // 반환값은 영구 상태 복원 후 외형을 다시 적용해야 하는지 나타낸다.
     virtual bool RestorePersistentProgress(const FUnitSkillProgress& State);
     virtual bool AdvancePreparation();
+    virtual USkeletalMesh* GetPersistentBodyMeshOverride() const { return nullptr; }
     virtual void ApplyPersistentVisuals();
     // 현재 체력 비율에 따라 공통 공속 계산에 더할 보너스다.
     virtual float GetHealthBasedAttackSpeedBonus(float HealthRatio) const { return 0.f; }

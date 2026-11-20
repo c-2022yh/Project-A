@@ -10,6 +10,7 @@
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/World.h"
+#include "Engine/SkeletalMesh.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Components/WidgetComponent.h"
 #include "UI/UnitStatusWidget.h"
@@ -315,8 +316,21 @@ void ABattleUnitBase::ApplyVisuals()
     if (!bInitialized) return;
     const FUnitVisualDefinition& Visuals = Definition.Visuals;
     VisualRoot->SetRelativeTransform(Visuals.VisualTransform);
-    Body->SetSkeletalMesh(Visuals.SkeletalMesh);
-    if (!Visuals.SkeletalMesh) LastValidationMessage += TEXT("No skeletal mesh assigned. ");
+    USkeletalMesh* BodyMesh = Visuals.SkeletalMesh;
+    for (const UUnitSkillBase* Skill : SkillInstances)
+    {
+        USkeletalMesh* Override = Skill->GetPersistentBodyMeshOverride();
+        if (!IsValid(Override) || Override == BodyMesh) continue;
+        if (!BodyMesh || !BodyMesh->GetSkeleton() || BodyMesh->GetSkeleton() != Override->GetSkeleton())
+        {
+            LastValidationMessage += FString::Printf(TEXT("Body mesh override requires the base skeleton: %s. "), *Override->GetName());
+            continue;
+        }
+        BodyMesh = Override;
+    }
+    // 진화 메시를 먼저 정한 뒤, 해당 메시의 손 소켓에 기존 무기를 다시 붙인다.
+    Body->SetSkeletalMesh(BodyMesh);
+    if (!BodyMesh) LastValidationMessage += TEXT("No skeletal mesh assigned. ");
     for (int32 Index = 0; Index < Visuals.MaterialOverrides.Num(); ++Index)
     {
         if (Visuals.MaterialOverrides[Index] && Index < Body->GetNumMaterials())
@@ -331,7 +345,7 @@ void ABattleUnitBase::ApplyVisuals()
         Body->SetAnimationMode(EAnimationMode::AnimationBlueprint);
         Body->SetAnimInstanceClass(Animations.AnimClass);
     }
-    else if (Animations.IdleAnimation && Visuals.SkeletalMesh)
+    else if (Animations.IdleAnimation && BodyMesh)
     {
         Body->PlayAnimation(Animations.IdleAnimation, true);
     }
@@ -1153,8 +1167,9 @@ void ABattleUnitBase::Tick(float DeltaSeconds)
     TickPeriodicEffects(DeltaSeconds);
     if (!bInCombat || !IsAlive()) return;
     AttackCooldown = FMath::Max(0.f, AttackCooldown - DeltaSeconds);
+    RetargetTimer = FMath::Max(0.f, RetargetTimer - DeltaSeconds);
     TickAction(DeltaSeconds);
-    if (bInCombat && IsAlive()) Think(DeltaSeconds);
+    if (bInCombat && IsAlive()) Think();
 }
 
 bool ABattleUnitBase::IsEnemyTarget(const ABattleUnitBase* Target) const
@@ -1203,14 +1218,13 @@ void ABattleUnitBase::FindTarget()
         BlockedSeconds = 0.f;
     }
 }
-void ABattleUnitBase::Think(float Delta)
+void ABattleUnitBase::Think()
 {
     if (IsStunned() || ActionState != EUnitActionState::Idle) return;
-    RetargetTimer -= Delta;
     if (!IsEnemyAttackTarget(CurrentTarget))
     {
-        CurrentTarget = nullptr;
-        if (RetargetTimer > 0.f) return;
+        if (!CurrentTarget && RetargetTimer > 0.f) return;
+        RetargetTimer = 0.f;
         UnreachableTargets.Empty(); FindTarget();
     }
     // 액티브는 현재 평타가 끝난 뒤 우선한다. 유효한 스킬 대상이 없으면 마나를 보존한다.
@@ -1221,7 +1235,6 @@ void ABattleUnitBase::Think(float Delta)
     const int32 MoveId = ++ActionSequence;
     ABoardTile* Next = nullptr;
     const EUnitPathResult Path = RequestCombatStep(CurrentTarget, MoveId, Next);
-    RetargetTimer = FMath::Max(0.05f, Positive(CombatPolicy.RetargetInterval));
     if (!bInCombat || !IsAlive() || IsStunned() || ActionState != EUnitActionState::Idle)
     {
         if (Path == EUnitPathResult::ReservedStep)
@@ -1232,18 +1245,23 @@ void ABattleUnitBase::Think(float Delta)
         return;
     }
     if (Path == EUnitPathResult::AlreadyInRange) { TryBasicAttack(); return; }
+    // 길이 막혔을 때만 재시도를 늦춘다. 타일에 도착하면 같은 틱에 다음 칸을 예약할 수 있다.
+    if (Path != EUnitPathResult::ReservedStep)
+        RetargetTimer = FMath::Max(0.05f, Positive(CombatPolicy.RetargetInterval));
     if (Path == EUnitPathResult::ReservedStep)
     {
         // 예약은 보드가 수행하고 유닛은 예약된 인접 빈 타일로만 이동한다.
         if (!IsValid(BoardManager) || !IsValid(Next) || Next == CurrentTile || HexDistance(CurrentTile, Next) != 1
             || !BoardManager->IsMoveReservationValid(this, MoveId, Next))
         {
+            RetargetTimer = FMath::Max(0.05f, Positive(CombatPolicy.RetargetInterval));
             LastValidationMessage = TEXT("Board must reserve an empty adjacent tile before returning ReservedStep.");
             if (IsValid(BoardManager)) BoardManager->CancelReservedMove(this, MoveId);
             if (IsValid(Next)) MovementReservationReleased(Next, MoveId, false);
             return;
         }
         ActiveActionId = MoveId; ReservedTile = Next; MoveStart = GetActorLocation();
+        FaceLocation(*this, Next->GetSurfaceLocation());
         BlockedSeconds = 0.f; ChangeAction(EUnitActionState::Moving);
     }
     else if (Path == EUnitPathResult::Unavailable)
@@ -1256,6 +1274,7 @@ void ABattleUnitBase::Think(float Delta)
             const int32 Index = CombatRoster.IndexOfByKey(CurrentTarget);
             if (Index != INDEX_NONE) UnreachableTargets.Add(Index);
             FindTarget();
+            if (CurrentTarget) RetargetTimer = 0.f;
         }
     }
 }

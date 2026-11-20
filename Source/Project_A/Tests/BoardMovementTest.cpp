@@ -416,7 +416,8 @@ bool FBoardReservationTest::RunTest(const FString& Parameters)
     A->SetActorLocation(Shared->GetSurfaceLocation() + FVector(0,0,1.f)); A->Tick(0.001f);
     TestTrue(TEXT("Arrival commits occupancy"), A->CurrentTile == Shared && Shared->OccupiedUnit == A);
     TestTrue(TEXT("Arrival releases source and reservation"), ATile->CanPlaceUnit() && !Shared->IsReserved());
-    // 다음 이동을 요청해 두고 시작하지 않으면 유예 시간 뒤 회수한다.
+    // 자동으로 이어진 이동을 취소한 뒤, 시작하지 않은 보드 예약의 만료를 따로 확인한다.
+    TestTrue(TEXT("Board cancels the automatically started step"), F.Board->CancelReservedMove(A, A->ActiveActionId));
     TestTrue(TEXT("Reserve next corridor tile"), F.Board->TryReserveNextStep(A, E, 103, Next) == EUnitPathResult::ReservedStep);
     F.Board->UnstartedReservationTimeout = 0.1f;
     F.World->Tick(LEVELTICK_TimeOnly, 0.2f); ++GFrameCounter;
@@ -501,6 +502,45 @@ bool FBoardCombatIntegrationTest::RunTest(const FString& Parameters)
     for (ABoardTile* Tile : F.Board->Tiles) TestFalse(TEXT("No reservation survives round reset"), Tile->IsReserved());
     return true;
 }
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBoardContinuousApproachTest, "ProjectA.Board.ContinuousApproach",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FBoardContinuousApproachTest::RunTest(const FString& Parameters)
+{
+    using namespace BoardMovementTests;
+    FFixture F;
+    ABattleUnitBase* Attacker = F.Spawn(EBattleTeam::Player, F.Board->GetTile(0, 0));
+    ABattleUnitBase* FirstEnemy = F.Spawn(EBattleTeam::Enemy, F.Board->GetTile(3, 2));
+    ABattleUnitBase* NextEnemy = F.Spawn(EBattleTeam::Enemy, F.Board->GetTile(5, 4));
+    if (!Attacker || !FirstEnemy || !NextEnemy) return false;
+
+    Attacker->CombatPolicy.RetargetInterval = 10.f;
+    Attacker->SetActorRotation(FRotator(0.f, 180.f, 0.f));
+    Attacker->StartCombat();
+    FirstEnemy->StartCombat();
+    NextEnemy->StartCombat();
+    Attacker->Tick(0.01f);
+    ABoardTile* FirstStep = F.Reservation(Attacker);
+    if (!TestNotNull(TEXT("First step reserved"), FirstStep)) return false;
+    const FVector FirstDirection = (FirstStep->GetSurfaceLocation() - Attacker->GetActorLocation()).GetSafeNormal2D();
+    TestTrue(TEXT("Unit faces the step as soon as it is reserved"),
+        Attacker->GetActorForwardVector().Equals(FirstDirection, 0.01f));
+
+    Attacker->Tick(1.f);
+    TestTrue(TEXT("Unit arrives at the first tile"), Attacker->CurrentTile == FirstStep);
+    TestTrue(TEXT("Next step reserved on the arrival tick"),
+        Attacker->ActionState == EUnitActionState::Moving && F.Reservation(Attacker) != nullptr);
+
+    FUnitDamageRequest Kill;
+    Kill.Attacker = Attacker;
+    Kill.RawDamage = 100000.f;
+    FirstEnemy->ReceiveDamage(Kill);
+    Attacker->Tick(0.01f);
+    TestTrue(TEXT("Next enemy selected as soon as the previous enemy dies"), Attacker->CurrentTarget == NextEnemy);
+    TestTrue(TEXT("Approach resumes on the retarget tick"),
+        Attacker->ActionState == EUnitActionState::Moving && F.Reservation(Attacker) != nullptr);
+    return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBoardTargetFallbackTest, "ProjectA.Board.TargetFallback",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 bool FBoardTargetFallbackTest::RunTest(const FString& Parameters)

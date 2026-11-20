@@ -64,6 +64,11 @@ void UHeroGrowthPassiveSkill::ApplyPersistentVisuals()
         Weapon->SetMaterial(WeaponMaterialSlot, EvolvedWeaponMaterial);
 }
 
+USkeletalMesh* UHeroGrowthPassiveSkill::GetPersistentBodyMeshOverride() const
+{
+    return bEvolved ? EvolvedSkeletalMesh.Get() : nullptr;
+}
+
 bool UHeroGrowthPassiveSkill::MergePersistentProgress(const FUnitSkillProgress& Kept, const FUnitSkillProgress& Material, FUnitSkillProgress& Out) const
 {
     if (!CanRestorePersistentProgress(Kept) || !CanRestorePersistentProgress(Material)) return false;
