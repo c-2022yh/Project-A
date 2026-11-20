@@ -1202,14 +1202,32 @@ void ABattleUnitBase::FindTarget()
 {
     ABattleUnitBase* OldTarget = CurrentTarget;
     CurrentTarget = nullptr;
+    const bool bCompareRoutes = Definition.BasicAttack.Delivery == EUnitAttackDelivery::Melee && IsValid(BoardManager);
+    int32 BestSteps = MAX_int32;
     int32 BestDistance = MAX_int32;
-    // 동률은 명단 순서로 해결한다. GameMode를 매 프레임 검색하거나 전체 Actor를 순회하지 않는다.
+    TArray<ABoardTile*> Path;
     for (int32 Index = 0; Index < CombatRoster.Num(); ++Index)
     {
         ABattleUnitBase* Unit = CombatRoster[Index];
         if (!IsEnemyAttackTarget(Unit) || UnreachableTargets.Contains(Index)) continue;
         const int32 Distance = HexDistance(CurrentTile, Unit->CurrentTile);
-        if (Distance < BestDistance) { BestDistance = Distance; CurrentTarget = Unit; }
+        int32 Steps = Distance;
+        if (bCompareRoutes)
+        {
+            // 실제 보드에서 점유/예약을 피해 사거리까지 가는 칸 수를 비교한다.
+            if (Distance <= FinalStats.AttackRange) Steps = 0;
+            else Steps = BoardManager->FindPathToAttackRange(this, Unit, Path) ? Path.Num() : MAX_int32;
+        }
+        if (Steps > BestSteps) continue;
+        if (Steps == BestSteps)
+        {
+            // 같은 칸 수로 갈 수 있으면 현재 대상을 유지한다.
+            if (bCompareRoutes && Steps < MAX_int32 && CurrentTarget == OldTarget) continue;
+            if (Distance >= BestDistance && !(bCompareRoutes && Steps < MAX_int32 && Unit == OldTarget)) continue;
+        }
+        BestSteps = Steps;
+        BestDistance = Distance;
+        CurrentTarget = Unit;
     }
     if (OldTarget != CurrentTarget)
     {
@@ -1226,6 +1244,12 @@ void ABattleUnitBase::Think()
         if (!CurrentTarget && RetargetTimer > 0.f) return;
         RetargetTimer = 0.f;
         UnreachableTargets.Empty(); FindTarget();
+    }
+    else if (Definition.BasicAttack.Delivery == EUnitAttackDelivery::Melee && IsValid(BoardManager)
+        && RetargetTimer <= 0.f && !IsInRange(CurrentTarget, FinalStats.AttackRange))
+    {
+        // 이동 중에는 예약을 유지하고, 도착한 뒤 다음 칸을 정하기 전에 다시 비교한다.
+        FindTarget();
     }
     // 액티브는 현재 평타가 끝난 뒤 우선한다. 유효한 스킬 대상이 없으면 마나를 보존한다.
     if (TryCastSkill()) return;
@@ -1262,6 +1286,7 @@ void ABattleUnitBase::Think()
         }
         ActiveActionId = MoveId; ReservedTile = Next; MoveStart = GetActorLocation();
         FaceLocation(*this, Next->GetSurfaceLocation());
+        UnreachableTargets.Reset();
         BlockedSeconds = 0.f; ChangeAction(EUnitActionState::Moving);
     }
     else if (Path == EUnitPathResult::Unavailable)
@@ -1397,6 +1422,7 @@ void ABattleUnitBase::ReportBasicHit(ABattleUnitBase* Target, const FUnitDamageR
     if (!Result.bApplied || !bInCombat || !IsAlive()) return;
     ++BasicHitCount;
     GainMana(10.f); // 명세의 기본 공격 적중 마나. 원거리도 도착 시에만 한 번 지급한다.
+    for (UUnitSkillBase* Skill : SkillInstances) Skill->OnBasicAttackLanded(Result);
     FUnitDamageRequest Context = Request; Context.Victim = Target;
     DispatchTrigger(EUnitTrigger::BasicAttackHit, Context, Result);
 }
@@ -1789,6 +1815,61 @@ bool FBerserkerRageTest::RunTest(const FString& Parameters)
         Unit->StopCombat();
         TestTrue(TEXT("Reset into next round"), Unit->ResetForRound());
         CheckSpeed(TEXT("Round reset restores base attack speed"), 0.75f);
+    }
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBerserkerLifestealTest, "ProjectA.Unit.BerserkerRage.BasicAttackLifesteal",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FBerserkerLifestealTest::RunTest(const FString& Parameters)
+{
+    using namespace UnitCombatTests;
+    for (const int32 Stars : {1, 2})
+    {
+        FFixture F;
+        FTestUnitData Data;
+        Data.BaseStats.MaxHealth = 1000.f;
+        Data.BaseStats.AttackDamage = 100.f;
+        Data.BaseStats.AttackSpeed = 1.f;
+        Data.BaseStats.CriticalChance = 0.f;
+        Data.BasicAttack.DamageType = EUnitDamageType::TrueDamage;
+        ABattleUnitBase* Target = F.Spawn(TEXT("Target"), Data, EBattleTeam::Enemy, 1);
+        Data.SkillClasses.Add(UBerserkerRageSkill::StaticClass());
+        ABattleUnitBase* Unit = F.Spawn(TEXT("Berserker"), Data, EBattleTeam::Player, 0);
+        if (!TestNotNull(TEXT("Berserker spawned"), Unit) || !TestNotNull(TEXT("Target spawned"), Target)) return false;
+
+        TestTrue(TEXT("Set star level"), Unit->SetStarLevel(Stars));
+        Unit->StartCombat();
+        Target->StartCombat();
+        Unit->CurrentTarget = Target;
+
+        FUnitDamageRequest Damage;
+        Damage.Type = EUnitDamageType::TrueDamage;
+        Damage.RawDamage = 300.f;
+        Unit->ReceiveDamage(Damage);
+        const float MissingHealthBaseline = Unit->CurrentHP;
+        Target->AddShield(TEXT("TestShield"), Unit->FinalStats.AttackDamage, 10.f);
+        TestTrue(TEXT("Shielded attack starts"), Unit->TryBasicAttack());
+        int32 AttackId = Unit->ActiveActionId;
+        TestTrue(TEXT("Shielded attack lands"), Unit->CommitAttackHit(AttackId));
+        TestEqual(TEXT("Fully blocked hit gives no lifesteal"), Unit->CurrentHP, MissingHealthBaseline);
+        Unit->FinishAction(AttackId);
+
+        Unit->Tick(1.f);
+        const float TargetHP = Target->CurrentHP;
+        AttackId = Unit->ActiveActionId;
+        TestTrue(TEXT("Next attack lands"), Unit->CommitAttackHit(AttackId));
+        TestFalse(TEXT("Duplicate notify is rejected"), Unit->CommitAttackHit(AttackId));
+        const float HealedHP = Unit->CurrentHP;
+        TestTrue(TEXT("Heals 10 percent of the target's lost health"),
+            Target->CurrentHP < TargetHP &&
+            FMath::IsNearlyEqual(HealedHP, MissingHealthBaseline + (TargetHP - Target->CurrentHP) * 0.1f, 0.001f));
+
+        Damage.Attacker = Unit;
+        Damage.Source = EUnitDamageSource::Skill;
+        Damage.RawDamage = 40.f;
+        TestTrue(TEXT("Skill damage applied"), Target->ReceiveDamage(Damage).HealthDamage > 0.f);
+        TestEqual(TEXT("Skill damage gives no lifesteal"), Unit->CurrentHP, HealedHP);
     }
     return true;
 }

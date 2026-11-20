@@ -35,6 +35,8 @@ public:
         float& FollowupRawDamage, float& FollowupTimeRatio, bool& bFollowupUsesNotify) const {}
     virtual void ModifyBasicAttackRelease(float AttackDamage, float CriticalMultiplier, FUnitDamageRequest& Damage) const {}
     virtual void OnBasicAttackReleased() {}
+    // 근접 평타와 평타 투사체가 실제로 피해를 적용한 뒤 결과를 받는다.
+    virtual void OnBasicAttackLanded(const FUnitDamageResult& Result) {}
     // 공통 피해 처리에서 인정한 처치 관여. 사망 이벤트 전의 기록 갱신 전용 native 알림이다.
     // 여기서 피해/전투 종료를 실행하지 않고 스킬 고유 성장 기록만 갱신한다.
     virtual void OnKillParticipation(ABattleUnitBase* DefeatedUnit);

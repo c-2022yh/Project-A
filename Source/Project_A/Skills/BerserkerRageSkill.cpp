@@ -1,4 +1,5 @@
 #include "BerserkerRageSkill.h"
+#include "../BattleUnitBase.h"
 
 FUnitSkillDefinition UBerserkerRageSkill::BuildSettings() const
 {
@@ -19,6 +20,13 @@ float UBerserkerRageSkill::GetHealthBasedAttackSpeedBonus(float HealthRatio) con
 
 bool UBerserkerRageSkill::ShouldActivate_Implementation(EUnitTrigger Event, const FUnitDamageRequest& Context, const FUnitDamageResult& Result)
 {
-    // 공속 계산에서 상시 반영하므로 별도의 전투 트리거로 실행하지 않는다.
+    // 공속 계산과 평타 명중 콜백에서 처리한다.
     return false;
+}
+
+void UBerserkerRageSkill::OnBasicAttackLanded(const FUnitDamageResult& Result)
+{
+    if (!IsValid(OwnerUnit) || Result.HealthDamage <= 0.f || !FMath::IsFinite(BasicAttackLifestealRatio)) return;
+    const float HealRatio = FMath::Clamp(BasicAttackLifestealRatio, 0.f, 1.f);
+    OwnerUnit->ReceiveHealing(Result.HealthDamage * HealRatio, OwnerUnit);
 }

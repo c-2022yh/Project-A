@@ -541,6 +541,42 @@ bool FBoardContinuousApproachTest::RunTest(const FString& Parameters)
     return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBoardMeleeTargetRouteTest, "ProjectA.Board.MeleeTargetRoute",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FBoardMeleeTargetRouteTest::RunTest(const FString& Parameters)
+{
+    using namespace BoardMovementTests;
+    FFixture F;
+    F.Board->GetTile(1, 0)->bBlocksMovement = true;
+    F.Board->GetTile(2, 1)->bBlocksMovement = true;
+    ABoardTile* NearTile = F.Board->GetTile(2, 0);
+    ABoardTile* FarTile = F.Board->GetTile(2, 2);
+    NearTile->TeamType = FarTile->TeamType = EBoardTileTeam::Enemy;
+    ABattleUnitBase* Attacker = F.Spawn(EBattleTeam::Player, F.Board->GetTile(0, 0));
+    ABattleUnitBase* Near = F.Spawn(EBattleTeam::Enemy, NearTile);
+    ABattleUnitBase* Far = F.Spawn(EBattleTeam::Enemy, FarTile);
+    if (!Attacker || !Near || !Far) return false;
+
+    TArray<ABoardTile*> NearPath, FarPath;
+    if (!TestTrue(TEXT("Both enemies are reachable"),
+        F.Board->FindPathToAttackRange(Attacker, Near, NearPath)
+        && F.Board->FindPathToAttackRange(Attacker, Far, FarPath))) return false;
+    TestTrue(TEXT("The closer enemy requires a detour"),
+        ABattleUnitBase::HexDistance(Attacker->CurrentTile, NearTile)
+            < ABattleUnitBase::HexDistance(Attacker->CurrentTile, FarTile)
+        && NearPath.Num() > FarPath.Num());
+
+    Attacker->StartCombat();
+    Near->StartCombat();
+    Far->StartCombat();
+    Attacker->CurrentTarget = Near;
+    Attacker->Tick(0.01f);
+    TestTrue(TEXT("Melee pursuit switches to the shorter route"), Attacker->CurrentTarget == Far);
+    TestTrue(TEXT("Movement reserves the first tile of that route"),
+        !FarPath.IsEmpty() && F.Reservation(Attacker) == FarPath[0]);
+    return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBoardTargetFallbackTest, "ProjectA.Board.TargetFallback",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 bool FBoardTargetFallbackTest::RunTest(const FString& Parameters)
