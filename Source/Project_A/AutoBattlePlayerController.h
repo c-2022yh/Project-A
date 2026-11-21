@@ -141,7 +141,7 @@ private:
     bool IsUnitInteractionAllowed(ABattleUnitBase* Unit) const;
     void SetSelectedUnitInternal(ABattleUnitBase* Unit);
     ABoardManager* GetBoardManager() const;
-    AActor* GetDragDropSlotAtCursor(FHitResult* OutHit = nullptr) const;
+    AActor* GetDragDropSlotAtCursor() const;
     void UpdateDraggedUnitLocation();
     bool IsDraggedUnitPlacementUnchanged() const;
 };
