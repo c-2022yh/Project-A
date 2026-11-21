@@ -11,7 +11,9 @@
 #include "Components/StaticMeshComponent.h"
 #include "Engine/World.h"
 #include "Engine/SkeletalMesh.h"
+#include "Kismet/GameplayStatics.h"
 #include "Materials/MaterialInstanceDynamic.h"
+#include "Sound/SoundBase.h"
 #include "Components/WidgetComponent.h"
 #include "UI/UnitStatusWidget.h"
 
@@ -1418,6 +1420,10 @@ bool ABattleUnitBase::CommitFollowupAttackHit(int32 ActionId)
 }
 void ABattleUnitBase::ReportBasicHit(ABattleUnitBase* Target, const FUnitDamageRequest& Request, const FUnitDamageResult& Result)
 {
+    // 근접 타격과 투사체 도착 모두 피해 적용이 확인된 경우에만 적중음을 재생한다.
+    if (Result.bApplied && IsValid(Target) && Definition.BasicAttack.ImpactSound)
+        UGameplayStatics::PlaySoundAtLocation(this, Definition.BasicAttack.ImpactSound, Target->GetActorLocation());
+
     ResolveArmedBasicAttack(Request, Result);
     if (!Result.bApplied || !bInCombat || !IsAlive()) return;
     ++BasicHitCount;

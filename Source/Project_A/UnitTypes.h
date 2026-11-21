@@ -10,6 +10,7 @@ class UMaterialInterface;
 class UAnimInstance;
 class UAnimSequence;
 class UAnimMontage;
+class USoundBase;
 class UUnitSkillBase;
 
 // 모든 기물의 공통 승급 규칙. 개별 DT 행에 같은 배율을 반복 저장하지 않는다.
@@ -143,6 +144,8 @@ struct PROJECT_A_API FUnitBasicAttackDefinition
     UPROPERTY(EditAnywhere, BlueprintReadOnly) float ProjectileMaxLifetime = 10.f;
     UPROPERTY(EditAnywhere, BlueprintReadOnly) FUnitProjectileVisualDefinition ProjectileVisual;
     UPROPERTY(EditAnywhere, BlueprintReadOnly) FUnitProjectileOrigin ProjectileOrigin;
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, meta=(ToolTip="평타가 실제로 적중할 때 대상 위치에서 재생할 효과음. 비워두면 재생하지 않는다."))
+    TObjectPtr<USoundBase> ImpactSound = nullptr;
 };
 
 UENUM(BlueprintType)
