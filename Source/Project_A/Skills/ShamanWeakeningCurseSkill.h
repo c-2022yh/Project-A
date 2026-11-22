@@ -3,7 +3,7 @@
 #include "UnitSkill.h"
 #include "ShamanWeakeningCurseSkill.generated.h"
 
-// 적에게 공유 저주를 걸고, 평타 대상과 별도로 다음 시전 대상을 고른다.
+// 시전마다 적 최대 두 명에게 공유 저주를 걸며, 기본 공격 대상은 유지한다.
 UCLASS(Blueprintable, HideCategories=(Skill))
 class PROJECT_A_API UShamanWeakeningCurseSkill : public UUnitActiveSkill
 {
@@ -11,10 +11,10 @@ class PROJECT_A_API UShamanWeakeningCurseSkill : public UUnitActiveSkill
 
 public:
     UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weakening Curse|Damage", meta=(ClampMin="0", ToolTip="AP 100 기준 1성 틱당 피해량."))
-    float OneStarDamagePerTickAt100AP = 20.f;
+    float OneStarDamagePerTickAt100AP = 18.f;
 
     UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weakening Curse|Damage", meta=(ClampMin="0", ToolTip="AP 100 기준 2성 틱당 피해량."))
-    float TwoStarDamagePerTickAt100AP = 36.f;
+    float TwoStarDamagePerTickAt100AP = 32.4f;
 
     UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weakening Curse|Damage", meta=(ClampMin="0", ClampMax="1"))
     float MagicResistanceReduction = 0.3f;
@@ -30,5 +30,9 @@ public:
 
     virtual FUnitSkillDefinition BuildSettings() const override;
     virtual ABattleUnitBase* SelectTarget_Implementation() const override;
+    virtual bool RequiresLivingCastTarget() const override { return false; }
     virtual void Execute_Implementation(ABattleUnitBase* Target, int32 ActionId) override;
+
+private:
+    ABattleUnitBase* SelectCurseTarget(const ABattleUnitBase* Excluded = nullptr) const;
 };

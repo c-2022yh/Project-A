@@ -21,13 +21,18 @@ FUnitSkillDefinition UShamanWeakeningCurseSkill::BuildSettings() const
 
 ABattleUnitBase* UShamanWeakeningCurseSkill::SelectTarget_Implementation() const
 {
+    return SelectCurseTarget();
+}
+
+ABattleUnitBase* UShamanWeakeningCurseSkill::SelectCurseTarget(const ABattleUnitBase* Excluded) const
+{
     if (!IsValid(OwnerUnit)) return nullptr;
 
     ABattleUnitBase* Best = nullptr;
     int32 BestDistance = MAX_int32;
     float BestRemaining = MAX_flt;
     ABattleUnitBase* Current = OwnerUnit->CurrentTarget;
-    if (OwnerUnit->IsEnemyAttackTarget(Current))
+    if (Current != Excluded && OwnerUnit->IsEnemyAttackTarget(Current))
     {
         const int32 Distance = ABattleUnitBase::HexDistance(OwnerUnit->CurrentTile, Current->CurrentTile);
         if (Distance <= Settings.CastRange && Current->GetPeriodicDamageRemaining(CurseId) < 0.f) return Current;
@@ -35,7 +40,7 @@ ABattleUnitBase* UShamanWeakeningCurseSkill::SelectTarget_Implementation() const
 
     for (ABattleUnitBase* Enemy : OwnerUnit->GetCombatRoster())
     {
-        if (!OwnerUnit->IsEnemyAttackTarget(Enemy)) continue;
+        if (Enemy == Excluded || !OwnerUnit->IsEnemyAttackTarget(Enemy)) continue;
         const int32 Distance = ABattleUnitBase::HexDistance(OwnerUnit->CurrentTile, Enemy->CurrentTile);
         if (Distance > Settings.CastRange) continue;
 
@@ -51,10 +56,16 @@ ABattleUnitBase* UShamanWeakeningCurseSkill::SelectTarget_Implementation() const
     return Best;
 }
 
-void UShamanWeakeningCurseSkill::Execute_Implementation(ABattleUnitBase* Target, int32 ActionId)
+void UShamanWeakeningCurseSkill::Execute_Implementation(ABattleUnitBase*, int32 ActionId)
 {
-    if (!IsValid(OwnerUnit) || !OwnerUnit->IsEnemyTarget(Target)) return;
+    // 시전 중 선행 대상이 죽거나 사거리에서 벗어날 수 있으므로 적용 시점에 두 대상을 다시 고른다.
+    ABattleUnitBase* First = SelectCurseTarget();
+    if (!First) return;
+    ABattleUnitBase* Second = SelectCurseTarget(First);
+
     const float DamageAt100AP = OwnerUnit->StarLevel == 2 ? TwoStarDamagePerTickAt100AP : OneStarDamagePerTickAt100AP;
     const float TickDamage = DamageAt100AP * (OwnerUnit->FinalStats.AbilityPower / 100.f);
-    Target->ApplyPeriodicMagicDamage(CurseId, OwnerUnit, ActionId, TickDamage, TickInterval, TickCount, MagicResistanceReduction);
+    First->ApplyPeriodicMagicDamage(CurseId, OwnerUnit, ActionId, TickDamage, TickInterval, TickCount, MagicResistanceReduction);
+    if (IsValid(Second))
+        Second->ApplyPeriodicMagicDamage(CurseId, OwnerUnit, ActionId, TickDamage, TickInterval, TickCount, MagicResistanceReduction);
 }

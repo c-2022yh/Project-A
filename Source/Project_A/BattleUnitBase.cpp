@@ -1723,6 +1723,7 @@ void ABattleUnitBase::TickProjectiles(float Delta)
 #include "Skills/SpellbladeSkills.h"
 #include "Skills/SniperPrecisionShotSkill.h"
 #include "Skills/ShamanWeakeningCurseSkill.h"
+#include "Skills/PaladinGuardianOathSkill.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/StaticMeshSocket.h"
 #include "Materials/Material.h"
@@ -1962,12 +1963,13 @@ bool FShamanCurseTest::RunTest(const FString& Parameters)
     ABattleUnitBase* Second = F.Spawn(TEXT("SecondShaman"), ShamanData, EBattleTeam::Player, -1);
     ABattleUnitBase* Near = F.Spawn(TEXT("Near"), EnemyData, EBattleTeam::Enemy, 1);
     ABattleUnitBase* Other = F.Spawn(TEXT("Other"), EnemyData, EBattleTeam::Enemy, 2);
+    ABattleUnitBase* Third = F.Spawn(TEXT("Third"), EnemyData, EBattleTeam::Enemy, -3);
     ABattleUnitBase* Far = F.Spawn(TEXT("Far"), EnemyData, EBattleTeam::Enemy, 4);
-    if (!First || !Second || !Near || !Other || !Far) { AddError(TEXT("Could not deploy curse test units")); return false; }
+    if (!First || !Second || !Near || !Other || !Third || !Far) { AddError(TEXT("Could not deploy curse test units")); return false; }
     Second->SetStarLevel(2);
-    First->SetCombatRoster({Near, Other, Far});
-    Second->SetCombatRoster({Near, Other, Far});
-    for (ABattleUnitBase* Unit : {First, Second, Near, Other, Far}) Unit->StartCombat();
+    First->SetCombatRoster({Near, Other, Third, Far});
+    Second->SetCombatRoster({Near, Other, Third, Far});
+    for (ABattleUnitBase* Unit : {First, Second, Near, Other, Third, Far}) Unit->StartCombat();
     First->CurrentTarget = Near;
     Second->CurrentTarget = Near;
     const FName CurseId(TEXT("ShamanWeakeningCurse"));
@@ -1981,26 +1983,36 @@ bool FShamanCurseTest::RunTest(const FString& Parameters)
         Unit->FinishAction(Id);
         return bCommitted;
     };
-    if (!TestTrue(TEXT("First shaman curses current attack target"), Cast(First))) return false;
+    if (!TestTrue(TEXT("First shaman casts a curse"), Cast(First))) return false;
     TestEqual(TEXT("Curse applies resistance reduction immediately"), Near->FinalStats.MagicResistance, 70.f);
+    TestEqual(TEXT("The same cast also curses a different enemy"), Other->GetPeriodicDamageRemaining(CurseId), 6.f);
+    TestTrue(TEXT("A cast affects at most two enemies"), Third->GetPeriodicDamageRemaining(CurseId) < 0.f);
     TestEqual(TEXT("No immediate damage"), Near->CurrentHP, 1000.f);
-    if (!TestTrue(TEXT("Second shaman can curse the other enemy"), Cast(Second))) return false;
-    TestEqual(TEXT("Second shaman sees first shaman's curse"), Other->GetPeriodicDamageRemaining(CurseId), 6.f);
-    TestTrue(TEXT("Casting leaves the basic attack target unchanged"), Second->CurrentTarget == Near);
     Near->Tick(1.f);
-    TestTrue(TEXT("The first tick is 20 damage before reduced MR"),
-        FMath::IsNearlyEqual(Near->CurrentHP, 1000.f - 20.f / 1.7f, 0.001f));
+    TestTrue(TEXT("The first tick is 18 damage before reduced MR"),
+        FMath::IsNearlyEqual(Near->CurrentHP, 1000.f - 18.f / 1.7f, 0.001f));
     Near->Tick(0.75f);
+    Other->Tick(0.25f);
     const float HPBeforeRefresh = Near->CurrentHP;
 
-    if (!TestTrue(TEXT("All in range cursed means refresh shortest duration"), Cast(Second))) return false;
+    if (!TestTrue(TEXT("Second shaman can spread and refresh the curse in one cast"), Cast(Second))) return false;
+    TestEqual(TEXT("An uncursed enemy has priority over an existing curse"), Third->GetPeriodicDamageRemaining(CurseId), 6.f);
     TestEqual(TEXT("Shorter curse was refreshed"), Near->GetPeriodicDamageRemaining(CurseId), 6.f);
+    TestEqual(TEXT("Longer curse was left alone"), Other->GetPeriodicDamageRemaining(CurseId), 5.75f);
     TestTrue(TEXT("Out of range enemy stays uncursed"), Far->GetPeriodicDamageRemaining(CurseId) < 0.f);
+    TestTrue(TEXT("Casting leaves the basic attack target unchanged"), Second->CurrentTarget == Near);
     TestEqual(TEXT("Refresh does not deal instant damage"), Near->CurrentHP, HPBeforeRefresh);
     Near->Tick(0.25f);
-    const float NewTickDamage = 72.f / 1.7f;
+    const float NewTickDamage = 64.8f / 1.7f;
     TestTrue(TEXT("Refresh preserves next tick and uses latest caster's star and AP"),
         FMath::IsNearlyEqual(Near->CurrentHP, HPBeforeRefresh - NewTickDamage, 0.001f));
+
+    Other->Tick(0.5f);
+    Third->Tick(1.f);
+    if (!TestTrue(TEXT("All in range cursed means refresh the two shortest"), Cast(Second))) return false;
+    TestEqual(TEXT("Shortest curse was refreshed"), Third->GetPeriodicDamageRemaining(CurseId), 6.f);
+    TestEqual(TEXT("Next shortest curse was refreshed"), Other->GetPeriodicDamageRemaining(CurseId), 6.f);
+    TestEqual(TEXT("Longest curse was left alone"), Near->GetPeriodicDamageRemaining(CurseId), 5.75f);
 
     FUnitDamageRequest Fatal;
     Fatal.Type = EUnitDamageType::TrueDamage;
@@ -2012,6 +2024,13 @@ bool FShamanCurseTest::RunTest(const FString& Parameters)
     TestTrue(TEXT("Expired curse is no longer visible to targeting"), Near->GetPeriodicDamageRemaining(CurseId) < 0.f);
     TestEqual(TEXT("Resistance restored after final tick"), Near->FinalStats.MagicResistance, 100.f);
 
+    First->SetCombatRoster({Near});
+    const float HPBeforeSingleTarget = Near->CurrentHP;
+    if (!TestTrue(TEXT("A cast works when only one enemy is available"), Cast(First))) return false;
+    Near->Tick(1.f);
+    TestTrue(TEXT("Single target receives exactly one tick"),
+        FMath::IsNearlyEqual(Near->CurrentHP, HPBeforeSingleTarget - 18.f / 1.7f, 0.001f));
+
     FUnitStatModifier Stronger;
     Stronger.MagicResistanceReduction = 0.5f;
     Other->AddModifier(TEXT("Stronger"), Stronger, 10.f);
@@ -2019,6 +2038,90 @@ bool FShamanCurseTest::RunTest(const FString& Parameters)
     Other->StopCombat();
     TestTrue(TEXT("Round stop clears pending ticks"), Other->GetPeriodicDamageRemaining(CurseId) < 0.f);
     TestEqual(TEXT("Round stop clears resistance reduction"), Other->FinalStats.MagicResistance, 100.f);
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPaladinGuardianOathTest, "ProjectA.Unit.PaladinGuardianOath.TargetsAndShieldLifecycle",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FPaladinGuardianOathTest::RunTest(const FString& Parameters)
+{
+    using namespace UnitCombatTests;
+    FFixture F;
+    FTestUnitData PaladinData;
+    PaladinData.BaseStats.AbilityPower = 120.f;
+    PaladinData.BaseStats.MaxMana = 95.f;
+    PaladinData.SkillClasses = {UPaladinGuardianOathSkill::StaticClass()};
+    FTestUnitData TargetData;
+    TargetData.BaseStats.MaxHealth = 1000.f;
+    ABattleUnitBase* Paladin = F.Spawn(TEXT("Paladin"), PaladinData, EBattleTeam::Player, 0);
+    ABattleUnitBase* First = F.Spawn(TEXT("First"), TargetData, EBattleTeam::Player, -2);
+    ABattleUnitBase* Second = F.Spawn(TEXT("Second"), TargetData, EBattleTeam::Player, 2);
+    ABattleUnitBase* Far = F.Spawn(TEXT("Far"), TargetData, EBattleTeam::Player, 3);
+    ABattleUnitBase* Enemy = F.Spawn(TEXT("Enemy"), TargetData, EBattleTeam::Enemy, 1);
+    if (!Paladin || !First || !Second || !Far || !Enemy) { AddError(TEXT("Could not deploy oath test units")); return false; }
+    Paladin->SetCombatRoster({Far, First, Second, Enemy, Paladin});
+    for (ABattleUnitBase* Unit : {First, Second, Far, Enemy, Paladin}) Unit->StartCombat();
+
+    const auto StartCast = [Paladin]
+    {
+        Paladin->GainMana(95.f);
+        return Paladin->TryCastSkill();
+    };
+    if (!TestTrue(TEXT("Oath starts at full mana"), StartCast())) return false;
+    Paladin->Tick(0.29f);
+    TestEqual(TEXT("No shield before the end of the cast"), Paladin->CurrentShield, 0.f);
+    Paladin->Tick(0.02f);
+    Paladin->FinishAction(Paladin->ActiveActionId);
+    TestEqual(TEXT("Paladin shields itself using its own AP"), Paladin->CurrentShield, 264.f);
+    TestEqual(TEXT("An equal ally at the range boundary wins by roster order"), First->CurrentShield, 264.f);
+    TestEqual(TEXT("Only one ally receives the shield"), Second->CurrentShield, 0.f);
+    TestEqual(TEXT("Out-of-range ally is excluded"), Far->CurrentShield, 0.f);
+    TestEqual(TEXT("A closer enemy is excluded"), Enemy->CurrentShield, 0.f);
+
+    if (!TestTrue(TEXT("Paladin prepares a second round"), Paladin->ResetForRound())) return false;
+    if (!TestTrue(TEXT("Paladin upgrades before combat"), Paladin->SetStarLevel(2))) return false;
+    Paladin->StartCombat();
+    if (!TestTrue(TEXT("Second oath starts"), StartCast())) return false;
+    FUnitDamageRequest Injury;
+    Injury.Type = EUnitDamageType::TrueDamage;
+    Injury.RawDamage = 100.f;
+    Second->ReceiveDamage(Injury);
+    Second->AddShield(TEXT("KnightShield"), 50.f, 8.f);
+    Paladin->Tick(0.31f);
+    Paladin->FinishAction(Paladin->ActiveActionId);
+    constexpr float TwoStarShield = 475.2f;
+    TestTrue(TEXT("Health tiebreaker uses HP at cast completion and stacks with a different shield"),
+        FMath::IsNearlyEqual(Second->CurrentShield, TwoStarShield + 50.f, 0.001f));
+    TestEqual(TEXT("The previous ally's shield is left alone"), First->CurrentShield, 264.f);
+
+    Second->Tick(3.f);
+    FUnitStatModifier Weakened;
+    Weakened.AbilityPower = -40.f;
+    Paladin->AddModifier(TEXT("TestWeakened"), Weakened, 8.f);
+    if (!TestTrue(TEXT("Weaker oath starts"), StartCast())) return false;
+    Paladin->Tick(0.31f);
+    Paladin->FinishAction(Paladin->ActiveActionId);
+    Second->Tick(1.1f);
+    TestTrue(TEXT("Same oath keeps the greater remaining amount and refreshes its duration"),
+        FMath::IsNearlyEqual(Second->CurrentShield, TwoStarShield + 50.f, 0.001f));
+
+    if (!TestTrue(TEXT("Oath can start before an ally leaves range"), StartCast())) return false;
+    First->CurrentTile->HexQ = -3;
+    Second->CurrentTile->HexQ = 4;
+    Paladin->Tick(0.31f);
+    Paladin->FinishAction(Paladin->ActiveActionId);
+    TestEqual(TEXT("Fallback affects the caster only once"), Paladin->Shields.Num(), 1);
+    TestEqual(TEXT("Fallback leaves distant allies unshielded"), Far->CurrentShield, 0.f);
+
+    FUnitDamageRequest Fatal;
+    Fatal.Type = EUnitDamageType::TrueDamage;
+    Fatal.RawDamage = 10000.f;
+    TestTrue(TEXT("Paladin dies after applying the shield"), Paladin->ReceiveDamage(Fatal).bKilled);
+    TestTrue(TEXT("Ally keeps the oath after the caster dies"), Second->CurrentShield > 50.f);
+    Second->Tick(3.f);
+    TestEqual(TEXT("Oath expires on its own timer"), Second->CurrentShield, 50.f);
+    Second->StopCombat();
+    TestEqual(TEXT("Combat end clears remaining shields"), Second->CurrentShield, 0.f);
     return true;
 }
 
