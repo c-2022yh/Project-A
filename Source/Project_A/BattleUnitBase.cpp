@@ -277,15 +277,8 @@ void ABattleUnitBase::ClearVisuals()
 {
     ResetDeathVisual();
     DeathFadeMaterials.Empty();
-    // 메시를 바꿔도 머티리얼 오버라이드는 남을 수 있으므로 반드시 비운다.
-    if (Body->GetAnimationMode() == EAnimationMode::AnimationSingleNode) Body->Stop();
-    Body->SetAnimInstanceClass(nullptr);
-    Body->SetAnimationMode(EAnimationMode::AnimationSingleNode);
-    Body->SetAnimation(nullptr);
-    Body->EmptyOverrideMaterials();
-    Body->SetSkeletalMesh(nullptr);
-    Body->SetRelativeTransform(FTransform::Identity);
-    VisualRoot->SetRelativeTransform(FTransform::Identity);
+
+    // 몸체 메시를 비우기 전에 양손 장비를 소켓에서 몸체 루트로 옮긴다.
     for (UStaticMeshComponent* Weapon : {MainHand.Get(), OffHand.Get()})
     {
         Weapon->AttachToComponent(Body, FAttachmentTransformRules::SnapToTargetNotIncludingScale);
@@ -295,6 +288,16 @@ void ABattleUnitBase::ClearVisuals()
         Weapon->SetVisibility(false);
         Weapon->SetCollisionEnabled(ECollisionEnabled::NoCollision);
     }
+
+    // 메시를 바꿔도 머티리얼 오버라이드는 남을 수 있으므로 반드시 비운다.
+    if (Body->GetAnimationMode() == EAnimationMode::AnimationSingleNode) Body->Stop();
+    Body->SetAnimInstanceClass(nullptr);
+    Body->SetAnimationMode(EAnimationMode::AnimationSingleNode);
+    Body->SetAnimation(nullptr);
+    Body->EmptyOverrideMaterials();
+    Body->SetSkeletalMesh(nullptr);
+    Body->SetRelativeTransform(FTransform::Identity);
+    VisualRoot->SetRelativeTransform(FTransform::Identity);
 }
 
 void ABattleUnitBase::ApplyWeapon(UStaticMeshComponent* Component, const FUnitWeaponVisual& Visual)
