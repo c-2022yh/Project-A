@@ -259,7 +259,29 @@ bool AAutoBattlePlayerController::GetBoardClickHit(FHitResult& Hit)
     Hit = FHitResult();
     const ABoardManager* Board = GetBoardManager();
     if (!IsValid(Board) || !Board->CanProcessWorldInput() || IsPointerOverHUD()) return false;
-    return GetHitResultUnderCursor(ECC_Visibility, true, Hit);
+    FVector RayOrigin;
+    FVector RayDirection;
+    if (!DeprojectMousePositionToWorld(RayOrigin, RayDirection)) return false;
+
+    FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(UnitSelection), true);
+    if (const AAutoBattleGameMode* Mode = Cast<AAutoBattleGameMode>(UGameplayStatics::GetGameMode(this)))
+        for (ABattleUnitBase* Unit : Mode->BattleUnits)
+            if (IsValid(Unit)) QueryParams.AddIgnoredActor(Unit);
+
+    if (!GetWorld() || !GetWorld()->LineTraceSingleByChannel(
+        Hit, RayOrigin, RayOrigin + RayDirection * 100000.0f, ECC_Visibility, QueryParams)) return false;
+
+    ABattleUnitBase* Unit = nullptr;
+    if (const ABoardTile* Tile = Cast<ABoardTile>(Hit.GetActor()))
+        Unit = Cast<ABattleUnitBase>(Tile->OccupiedUnit);
+    else if (const ABenchTile* Slot = Cast<ABenchTile>(Hit.GetActor()))
+        Unit = Cast<ABattleUnitBase>(Slot->OccupiedUnit);
+    if (IsValid(Unit))
+    {
+        Hit.HitObjectHandle = FActorInstanceHandle(Unit);
+        Hit.Component = Unit->SelectionCollision;
+    }
+    return true;
 }
 
 // Canvas 상점 버튼이나 HUD HitBox 위에서는 보드 입력을 보류한다.
@@ -284,9 +306,8 @@ bool AAutoBattlePlayerController::IsUnitInteractionAllowed(ABattleUnitBase* Unit
     return IsValid(Board) && Board->CanInteractWithUnit(Unit);
 }
 
-AActor* AAutoBattlePlayerController::GetDragDropSlotAtCursor(FHitResult* OutHit) const
+AActor* AAutoBattlePlayerController::GetDragDropSlotAtCursor() const
 {
-    if (OutHit) *OutHit = FHitResult();
     ABattleUnitBase* UnitBeingDragged = DraggedUnit.Get();
     if (IsPointerOverHUD() || !IsUnitInteractionAllowed(UnitBeingDragged)) return nullptr;
 
@@ -303,7 +324,6 @@ AActor* AAutoBattlePlayerController::GetDragDropSlotAtCursor(FHitResult* OutHit)
     FHitResult Hit;
     if (!GetWorld() || !GetWorld()->LineTraceSingleByChannel(
         Hit, RayOrigin, RayOrigin + RayDirection * 100000.0f, ECC_Visibility, QueryParams)) return nullptr;
-    if (OutHit) *OutHit = Hit;
     AActor* HitActor = Hit.GetActor();
     return Cast<ABoardTile>(HitActor) || Cast<ABenchTile>(HitActor) ? HitActor : nullptr;
 }
@@ -363,10 +383,13 @@ void AAutoBattlePlayerController::PlayerTick(float DeltaSeconds)
 
     // Listeners may have changed popup locks or the game phase during this tick.
     if (!IsValid(Board) || !Board->CanProcessWorldInput()) return;
-    FHitResult Hit;
     AActor* SlotActor = nullptr;
-    if (bIsUnitDragging) SlotActor = GetDragDropSlotAtCursor(&Hit);
-    else if (!IsPointerOverHUD() && GetHitResultUnderCursor(ECC_Visibility, true, Hit)) SlotActor = Hit.GetActor();
+    if (bIsUnitDragging) SlotActor = GetDragDropSlotAtCursor();
+    else if (!IsPointerOverHUD())
+    {
+        FHitResult Hit;
+        if (GetHitResultUnderCursor(ECC_Visibility, true, Hit)) SlotActor = Hit.GetActor();
+    }
     HoveredTile = Cast<ABoardTile>(SlotActor);
     HoveredBenchSlot = Cast<ABenchTile>(SlotActor);
 

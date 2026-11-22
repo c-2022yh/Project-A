@@ -14,7 +14,7 @@
 
 namespace
 {
-FVector GetUnitLocationOnSurface(const ABattleUnitBase* Unit, const FVector& Surface)
+FVector GetUnitLocationOnSurface(const FVector& Surface)
 {
     return Surface + FVector(0.0f, 0.0f, 1.0f);
 }
@@ -517,7 +517,7 @@ bool ABoardManager::TrySynchronizeBenchOccupancy(FString& OutFailureReason)
             ABattleUnitBase* Unit = WaitingUnits[Index];
             ABenchTile* Slot = AssignedSlots[Index];
             if (!IsValid(Unit) || !IsValid(Slot)) { bApplied = false; break; }
-            const FVector Expected = GetUnitLocationOnSurface(Unit, Slot->GetSurfaceLocation());
+            const FVector Expected = GetUnitLocationOnSurface(Slot->GetSurfaceLocation());
             if (!Unit->GetActorLocation().Equals(Expected, 0.1f)) { bApplied = false; break; }
         }
     }
@@ -719,7 +719,7 @@ bool ABoardManager::RestorePlayerFormation()
             if (!IsValid(Unit) || !IsValid(Target)) { bApplied = false; break; }
             if (!Unit->IsAlive()) continue;
             if (!CaptureUnitPlacement(Unit, Applied, Reason) || Applied.Tile != Target
-                || !Unit->GetActorLocation().Equals(GetUnitLocationOnSurface(Unit, Target->GetSurfaceLocation()), 0.1f))
+                || !Unit->GetActorLocation().Equals(GetUnitLocationOnSurface(Target->GetSurfaceLocation()), 0.1f))
             {
                 bApplied = false;
                 break;
@@ -946,15 +946,15 @@ bool ABoardManager::ApplyUnitPlacement(ABattleUnitBase* Unit, ABoardTile* Tile, 
     {
         // Keep the combat owner's public placement function responsible for board actor movement.
         if (!Unit->PlaceOnTile(Tile) || !IsValid(Unit) || !IsValid(Tile)) return false;
-        const FVector Expected = GetUnitLocationOnSurface(Unit, Tile->GetSurfaceLocation());
+        const FVector Expected = GetUnitLocationOnSurface(Tile->GetSurfaceLocation());
         return Unit->GetActorLocation().Equals(Expected, 0.1f);
     }
     if (!IsValid(BenchSlot) || !BenchSlot->CanPlaceUnit() || IsValid(Unit->CurrentTile)) return false;
-    const FVector WaitingLocation = GetUnitLocationOnSurface(Unit, BenchSlot->GetSurfaceLocation());
+    const FVector WaitingLocation = GetUnitLocationOnSurface(BenchSlot->GetSurfaceLocation());
     if (!Unit->SetWaitingPlacement(WaitingLocation)) return false;
     BenchSlot->SetOccupiedUnit(Unit);
     if (BenchSlot->OccupiedUnit != Unit || !BenchSlot->HasConsistentOccupancy()) return false;
-    const FVector Expected = GetUnitLocationOnSurface(Unit, BenchSlot->GetSurfaceLocation());
+    const FVector Expected = GetUnitLocationOnSurface(BenchSlot->GetSurfaceLocation());
     return Unit->SetActorLocation(Expected,
         false, nullptr, ETeleportType::TeleportPhysics)
         && IsValid(Unit) && Unit->GetActorLocation().Equals(Expected, 0.1f);
@@ -998,7 +998,7 @@ bool ABoardManager::MoveOrSwapUnits(const FUnitPlacementSnapshot& Source, ABoard
         if (IsValid(Tile)) Surface = Tile->GetSurfaceLocation();
         else if (IsValid(BenchSlot)) Surface = BenchSlot->GetSurfaceLocation();
         else return false;
-        return Unit->GetActorLocation().Equals(GetUnitLocationOnSurface(Unit, Surface), 0.1f);
+        return Unit->GetActorLocation().Equals(GetUnitLocationOnSurface(Surface), 0.1f);
     };
     FUnitPlacementSnapshot Applied;
     if (bMoved && CaptureUnitPlacement(Source.Unit, Applied, OutFailureReason)
@@ -1121,7 +1121,7 @@ bool ABoardManager::OwnsTile(const ABoardTile* Tile) const
 ABoardTile* ABoardManager::GetTileByHex(int32 Q, int32 R) const
 {
     for (ABoardTile* Tile : Tiles)
-        if (OwnsTile(Tile) && Tile->HexQ == Q && Tile->HexR == R) return Tile;
+        if (IsValid(Tile) && Tile->OwningBoard == this && Tile->HexQ == Q && Tile->HexR == R) return Tile;
     return nullptr;
 }
 TArray<ABoardTile*> ABoardManager::GetNeighbors(ABoardTile* Tile) const
@@ -1139,7 +1139,7 @@ TArray<ABattleUnitBase*> ABoardManager::GetUnitsOnBoard() const
     TArray<ABattleUnitBase*> Result;
     for (ABoardTile* Tile : Tiles)
     {
-        if (!OwnsTile(Tile)) continue;
+        if (!IsValid(Tile) || Tile->OwningBoard != this) continue;
         ABattleUnitBase* Unit = Cast<ABattleUnitBase>(Tile->OccupiedUnit);
         if (IsValid(Unit) && Unit->CurrentTile == Tile && Unit->IsAlive()) Result.AddUnique(Unit);
     }
