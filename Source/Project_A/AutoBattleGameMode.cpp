@@ -10,6 +10,11 @@
 #include "UObject/UnrealType.h"
 #include "Engine/Engine.h"
 #include "EngineUtils.h"
+#include "Engine/GameViewportClient.h"
+#include "Widgets/SOverlay.h"
+#include "Widgets/Layout/SBorder.h"
+#include "Widgets/Text/STextBlock.h"
+#include "Styling/CoreStyle.h"
 
 AAutoBattleGameMode::AAutoBattleGameMode()
 {
@@ -598,6 +603,7 @@ void AAutoBattleGameMode::ManagedPhaseChanged(uint8 Previous, uint8 Current)
 {
     static const TCHAR* Names[] = {TEXT("Initializing"), TEXT("Preparation"), TEXT("Combat"), TEXT("ResolvingCombat"), TEXT("Reward"), TEXT("Finished")};
     UE_LOG(LogTemp, Display, TEXT("MANAGED_PHASE: round=%d %s -> %s outcome=%s"), CurrentRound, Previous < 6 ? Names[Previous] : TEXT("Invalid"), Current < 6 ? Names[Current] : TEXT("Invalid"), *ManagedLastOutcome);
+    RefreshRoundDisplay();
     if (Current == 5)
     {
         if(!RestoreManagedUnits()){ManagedError(TEXT("Final reset failed"));return;}
@@ -614,10 +620,66 @@ void AAutoBattleGameMode::ManagedAvailabilityChanged(bool Allowed, FText Message
 void AAutoBattleGameMode::ManagedConfigurationError(FText Message) { ManagedError(Message.ToString()); }
 void AAutoBattleGameMode::EndPlay(const EEndPlayReason::Type Reason)
 {
+    RemoveRoundDisplay();
     if (bEnableMainMapRoundTest && IsValid(ManagedRoundManager))
     {
         GetWorldTimerManager().ClearAllTimersForObject(ManagedRoundManager);
         ManagedRoundManager->Destroy();
     }
     Super::EndPlay(Reason);
+}
+
+
+FText AAutoBattleGameMode::GetRoundDisplayText() const
+{
+    return RoundDisplayLabel.IsValid() ? RoundDisplayLabel->GetText() : FText::GetEmpty();
+}
+
+void AAutoBattleGameMode::RefreshRoundDisplay()
+{
+    // Presentation only: called by the existing phase dispatcher, never by Tick.
+    // The manager commits CurrentRoundNumber before entering Preparation.
+    if (!bEnableMainMapRoundTest || !IsValid(ManagedRoundManager) || IsRunningCommandlet()) return;
+    const auto RoundProperty = FindFProperty<FIntProperty>(ManagedRoundManager->GetClass(), TEXT("CurrentRoundNumber"));
+    const int32 Phase = GetManagedRoundPhase();
+    const int32 Round = RoundProperty ? RoundProperty->GetPropertyValue_InContainer(ManagedRoundManager) : 0;
+    if (Round < 1 || Round > 5 || Phase < 1 || Phase > 5) return;
+    UGameViewportClient* Viewport = GetWorld() ? GetWorld()->GetGameViewport() : nullptr;
+    if (!Viewport) return;
+    if (RoundDisplayRoot.IsValid() && RoundDisplayViewport.Get() != Viewport) RemoveRoundDisplay();
+    if (!RoundDisplayRoot.IsValid())
+    {
+        RoundDisplayRoot = SNew(SOverlay)
+            .Visibility(EVisibility::HitTestInvisible)
+            + SOverlay::Slot().HAlign(HAlign_Right).VAlign(VAlign_Top).Padding(FMargin(0.f, 80.f, 24.f, 0.f))
+            [
+                SNew(SBorder)
+                .BorderImage(FCoreStyle::Get().GetBrush("WhiteBrush"))
+                .BorderBackgroundColor(FLinearColor(0.015f, 0.02f, 0.04f, 0.88f))
+                .Padding(FMargin(12.f, 6.f))
+                [
+                    SAssignNew(RoundDisplayLabel, STextBlock)
+                    .Font(FCoreStyle::GetDefaultFontStyle("Bold", 20))
+                    .ColorAndOpacity(FLinearColor::White)
+                    .ShadowOffset(FVector2D(1.f, 1.f))
+                    .ShadowColorAndOpacity(FLinearColor::Black)
+                ]
+            ];
+        RoundDisplayViewport = Viewport;
+        Viewport->AddViewportWidgetContent(RoundDisplayRoot.ToSharedRef(), 100);
+        UE_LOG(LogTemp, Display, TEXT("ROUND_DISPLAY_CREATED: one hit-test-invisible viewport widget"));
+    }
+    const FText Text = FText::FromString(FString::Printf(TEXT("Round %d / 5%s"), Round,
+        Phase == 5 ? TEXT(" - Finished") : TEXT("")));
+    RoundDisplayLabel->SetText(Text);
+    UE_LOG(LogTemp, Display, TEXT("ROUND_DISPLAY_UPDATED: managerRound=%d phase=%d text=%s"), Round, Phase, *Text.ToString());
+}
+
+void AAutoBattleGameMode::RemoveRoundDisplay()
+{
+    if (RoundDisplayRoot.IsValid())
+        if (UGameViewportClient* Viewport = RoundDisplayViewport.Get()) Viewport->RemoveViewportWidgetContent(RoundDisplayRoot.ToSharedRef());
+    RoundDisplayLabel.Reset();
+    RoundDisplayRoot.Reset();
+    RoundDisplayViewport.Reset();
 }

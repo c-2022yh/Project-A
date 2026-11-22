@@ -4,6 +4,9 @@
 #include "BattleUnitBase.h"
 #include "AutoBattleGameMode.generated.h"
 
+class SWidget;
+class STextBlock;
+class UGameViewportClient;
 class ABoardManager;
 class ABoardTile;
 
@@ -75,6 +78,9 @@ public:
     void SetManagedDragState(bool bUnitDragging, bool bItemDragging);
     UFUNCTION(BlueprintPure, Category="Round|MainMap Test")
     int32 GetManagedRoundPhase() const;
+    /** Read-only text currently shown by the independent round display. */
+    UFUNCTION(BlueprintPure, Category="Round|Display")
+    FText GetRoundDisplayText() const;
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Game")
     EGamePhase CurrentPhase = EGamePhase::Preparation;
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Round")
@@ -158,6 +164,11 @@ protected:
     void ReceiveGamePhaseChanged(EGamePhase Phase);
 
 private:
+    void RefreshRoundDisplay();
+    void RemoveRoundDisplay();
+    TSharedPtr<SWidget> RoundDisplayRoot;
+    TSharedPtr<STextBlock> RoundDisplayLabel;
+    TWeakObjectPtr<UGameViewportClient> RoundDisplayViewport;
     bool InitializeManagedRoundBridge();
     bool CallManaged(FName FunctionName, TFunctionRef<void(UFunction*, uint8*)> Fill);
     bool CallManaged(FName FunctionName);
