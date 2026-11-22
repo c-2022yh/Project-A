@@ -1,7 +1,8 @@
-﻿#pragma once
+#pragma once
 
 #include "GameFramework/GameModeBase.h"
 #include "../UnitPlacement.h"
+#include "../ShopMatchProgress.h"
 #include "ShopTestGameMode.generated.h"
 
 class UTestPlacement;
@@ -12,12 +13,14 @@ class AStaticMeshActor;
 class UStaticMesh;
 
 UCLASS()
-class AShopTestGameMode : public AGameModeBase, public IUnitPlacement
+class AShopTestGameMode : public AGameModeBase, public IUnitPlacement, public IShopMatchProgress
 {
     GENERATED_BODY()
 
 public:
     AShopTestGameMode();
+    FShopMatchState Match;
+    virtual FShopMatchState GetShopMatchState_Implementation() const override { return Match; }
     virtual void PostLogin(APlayerController* Player) override;
     virtual FUnitPosition GetUnitPosition_Implementation(FGuid Id) const override;
     virtual FGuid GetOccupant_Implementation(FUnitPosition Position) const override;

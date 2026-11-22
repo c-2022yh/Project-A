@@ -13,22 +13,17 @@ namespace
     }
 }
 
-EElementalForm UElementalistSkill::GetForm() const
+void UElementalistSkill::RefreshCastSettings()
 {
-    if (SelectedForm != EElementalForm::Unselected) return SelectedForm;
-    return DefaultForm == EElementalForm::Fire ? EElementalForm::Fire : EElementalForm::Frost;
+    Settings = BuildSettings();
 }
 
-bool UElementalistSkill::SetForm(EElementalForm Form)
+void UElementalistSkill::ResetRuntime()
 {
-    if (!IsValid(OwnerUnit) || !OwnerUnit->bInitialized || OwnerUnit->bInCombat
-        || (Form != EElementalForm::Fire && Form != EElementalForm::Frost)) return false;
-    if (SelectedForm == Form) return true;
-    SelectedForm = Form;
-    Settings = BuildSettings();
-    OwnerUnit->RecalculateStats();
-    OnFormChanged(Form);
-    return true;
+    NextForm = CastingForm = EElementalForm::Frost;
+    MeteorCenter.Reset();
+    RefreshCastSettings();
+    Super::ResetRuntime();
 }
 
 FUnitSkillDefinition UElementalistSkill::BuildSettings() const
@@ -66,7 +61,7 @@ void UElementalistSkill::CustomizeEffectValues(TArray<float>& Values) const
 {
     if (!IsValid(OwnerUnit) || Values.IsEmpty()) return;
     const bool bTwoStar = OwnerUnit->StarLevel == 2;
-    const float Ratio = GetForm() == EElementalForm::Fire
+    const float Ratio = CastingForm == EElementalForm::Fire
         ? (bTwoStar ? FireTwoStarAPRatio : FireOneStarAPRatio)
         : (bTwoStar ? FrostTwoStarAPRatio : FrostOneStarAPRatio);
     Values[0] = OwnerUnit->FinalStats.AbilityPower * AtLeast(Ratio, 0.f, 0.f);
@@ -104,23 +99,29 @@ ABattleUnitBase* UElementalistSkill::SelectTarget_Implementation() const
 
 void UElementalistSkill::PrepareCast(ABattleUnitBase* Target, int32 ActionId)
 {
-    MeteorCenter = GetForm() == EElementalForm::Fire && IsValid(Target) ? Target->CurrentTile.Get() : nullptr;
+    CastingForm = NextForm;
+    MeteorCenter = CastingForm == EElementalForm::Fire && IsValid(Target) ? Target->CurrentTile.Get() : nullptr;
 }
 
 void UElementalistSkill::BeginCast(int32 ActionId)
 {
+    if (!IsValid(OwnerUnit)) return;
+    // 다음 주문의 마나는 바로 표시하고, 진행 중인 주문의 설정은 효과 처리까지 유지한다.
+    NextForm = CastingForm == EElementalForm::Fire ? EElementalForm::Frost : EElementalForm::Fire;
+    OwnerUnit->RecalculateStats();
     // 유성 타이머는 모션 완료 시점이 아닌 시전 시작부터 돈다.
-    if (GetForm() == EElementalForm::Fire && IsValid(OwnerUnit)) OwnerUnit->CommitSkillEffect(ActionId);
+    if (CastingForm == EElementalForm::Fire) OwnerUnit->CommitSkillEffect(ActionId);
+    if (IsValid(OwnerUnit) && OwnerUnit->ActiveActionId == ActionId) OnFormChanged(NextForm);
 }
 
 bool UElementalistSkill::RequiresLivingCastTarget() const
 {
-    return GetForm() == EElementalForm::Frost;
+    return CastingForm == EElementalForm::Frost;
 }
 
 void UElementalistSkill::Execute_Implementation(ABattleUnitBase* Target, int32 ActionId)
 {
-    if (GetForm() == EElementalForm::Frost)
+    if (CastingForm == EElementalForm::Frost)
     {
         Super::Execute_Implementation(Target, ActionId);
         return;

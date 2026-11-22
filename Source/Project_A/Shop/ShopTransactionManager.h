@@ -1,13 +1,12 @@
-﻿#pragma once
+#pragma once
 
 #include "GameFramework/Actor.h"
-#include "ItemManager.h"
+#include "RosterManager.h"
 #include "ShopTypes.h"
 #include "ShopTransactionManager.generated.h"
 
-class ARosterManager;
+class AItemManager;
 class AShopManager;
-class ABattleUnitBase;
 
 UCLASS(Blueprintable)
 class PROJECT_A_API AShopTransactionManager : public AActor
@@ -24,20 +23,17 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Transactions", meta=(ExposeOnSpawn=true))
     TObjectPtr<AItemManager> Items;
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Transactions|Elementalist")
-    FName ElementalistUnitId = TEXT("Elementalist");
-
     UPROPERTY(BlueprintAssignable, Category="Transactions")
     FManagerChanged OnRewardReceived;
 
     UFUNCTION(BlueprintCallable, Category="Transactions")
-    bool EnterPreparation(int32 Round, int32 DeploymentLimit);
+    bool EnterPreparation();
 
     UFUNCTION(BlueprintCallable, Category="Transactions")
     ETransactionResult GrantStartingUnit(FName UnitId);
 
     UFUNCTION(BlueprintCallable, Category="Transactions")
-    bool BeginRewardSelection(int32 NextDeploymentLimit);
+    bool OpenRewards();
 
     UFUNCTION(BlueprintCallable, Category="Transactions")
     bool GrantKillReward(FGuid DefeatedEnemyId);
@@ -52,20 +48,13 @@ public:
     ETransactionResult RequestReward(int32 Slot, int32 SelectionRevision);
 
     UFUNCTION(BlueprintCallable, Category="Transactions")
-    ETransactionResult RequestMove(FGuid UnitId, FUnitPosition Destination);
-    bool TryMoveRegisteredElementalist(ABattleUnitBase* Unit, FUnitPosition Destination, ETransactionResult& Result);
-
-    UFUNCTION(BlueprintPure, Category="Transactions|Elementalist")
-    bool GetPendingElementalPlacement(FGuid& UnitId, FUnitPosition& Destination, EElementalForm& PreviousForm, int32& Revision) const;
-
-    UFUNCTION(BlueprintCallable, Category="Transactions|Elementalist")
-    ETransactionResult RequestElementalPlacement(EElementalForm Form, int32 Revision);
-
-    UFUNCTION(BlueprintCallable, Category="Transactions|Elementalist")
-    void CancelElementalPlacement();
+    ETransactionResult RequestReroll();
 
     UFUNCTION(BlueprintCallable, Category="Transactions")
-    ETransactionResult RequestMoveToBench(FGuid UnitId, int32 Slot);
+    ETransactionResult RequestShopLock(bool bLocked);
+
+    UFUNCTION(BlueprintCallable, Category="Transactions")
+    bool GrantRoundGold(int32 Amount);
 
     UFUNCTION(BlueprintCallable, Category="Transactions")
     ETransactionResult RequestEquip(FGuid UnitId, FName ItemId);
@@ -76,23 +65,15 @@ public:
     UFUNCTION(BlueprintPure, Category="Transactions")
     bool IsConfigured() const;
 
+    UFUNCTION(BlueprintPure, Category="Transactions")
+    FShopMatchState GetMatchState() const;
+
 private:
-    struct FPendingElementalPlacement
-    {
-        FGuid UnitId;
-        FUnitPosition Source;
-        FUnitPosition Destination;
-        int32 Round = 0;
-        int32 Revision = 0;
-    };
-    TOptional<FPendingElementalPlacement> PendingElementalPlacement;
-    int32 ElementalPlacementRevision = 0;
-    bool IsElementalist(const FRosterUnit& Unit) const;
-    ETransactionResult RequestMoveInternal(FGuid UnitId, FUnitPosition Destination,
-        const FPendingElementalPlacement* Confirmed, EElementalForm Form);
-    ETransactionResult AddUnit(const FShopOffer& Offer, int32 Stars, bool bReward);
+    bool CanStartRequest() const;
+    ETransactionResult AddUnit(const FShopOffer& Offer, int32 Stars, const FShopMatchState& Match);
     ETransactionResult ChangeEquipment(FGuid UnitId, FName ItemId, TOptional<int32> UnequipSlot);
-    bool PlanMerge(FName UnitId, const FRosterUnit* Incoming, FUnitPosition Destination,
-        TArray<FRosterUnitChange>& Changes, AItemManager::FState& ItemState) const;
-    bool ApplyChanges(TArray<FRosterUnitChange>& Changes, AItemManager::FState&& ItemState, EShopPhase Phase, int32 Limit);
+    bool ApplyMerges(TArray<FRosterUnitChange>& Changes, const TArray<ARosterManager::FMerge>& Merges,
+        const FShopMatchState& Match);
+    bool CommitChanges(const TArray<FRosterUnitChange>& Changes, TArray<FName>&& Inventory,
+        const FShopMatchState& Match);
 };

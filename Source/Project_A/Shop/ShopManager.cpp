@@ -1,4 +1,4 @@
-﻿#include "ShopManager.h"
+#include "ShopManager.h"
 #include "ShopOdds.h"
 
 
@@ -31,44 +31,6 @@ AShopManager::AShopManager()
     Offers.SetNum(ShopSlots);
 }
 
-bool AShopManager::CanTrade() const
-{
-    return Phase == EShopPhase::Preparation || Phase == EShopPhase::Combat;
-}
-
-bool AShopManager::CanManageBoard() const
-{
-    return Phase == EShopPhase::Preparation || Phase == EShopPhase::RewardSelection;
-}
-
-bool AShopManager::BeginCombat()
-{
-    if (bChanging || Phase != EShopPhase::Preparation) return false;
-    TGuardValue<bool> Guard(bChanging, true);
-    Phase = EShopPhase::Combat;
-    OnShopChanged.Broadcast();
-    return true;
-}
-
-bool AShopManager::BeginSettlement()
-{
-    if (bChanging || Phase != EShopPhase::Combat) return false;
-    TGuardValue<bool> Guard(bChanging, true);
-    Phase = EShopPhase::Settlement;
-    OnShopChanged.Broadcast();
-    return true;
-}
-
-bool AShopManager::FinishMatch()
-{
-    if (bChanging || (Phase != EShopPhase::Settlement
-        && (Phase != EShopPhase::RewardSelection || !bRewardReceived))) return false;
-    TGuardValue<bool> Guard(bChanging, true);
-    Phase = EShopPhase::Finished;
-    OnShopChanged.Broadcast();
-    return true;
-}
-
 void AShopManager::AddGold(int64 Amount)
 {
     Gold = static_cast<int32>(FMath::Clamp<int64>(Gold + Amount, 0, MAX_int32));
@@ -76,7 +38,7 @@ void AShopManager::AddGold(int64 Amount)
 
 bool AShopManager::CreditKill(FGuid DefeatedEnemyId)
 {
-    if (Phase != EShopPhase::Combat || !DefeatedEnemyId.IsValid() || RewardedKills.Contains(DefeatedEnemyId))
+    if (!DefeatedEnemyId.IsValid() || RewardedKills.Contains(DefeatedEnemyId))
         return false;
 
     RewardedKills.Add(DefeatedEnemyId);
@@ -86,42 +48,60 @@ bool AShopManager::CreditKill(FGuid DefeatedEnemyId)
     return true;
 }
 
-bool AShopManager::GrantRoundGold(int32 Amount)
+bool AShopManager::CreditRoundGold(int32 Round, int32 Amount)
 {
-    if (bChanging || Phase != EShopPhase::Settlement || bRoundGoldGranted || Amount < 0) return false;
-    TGuardValue<bool> Guard(bChanging, true);
-    bRoundGoldGranted = true;
+    if (Round <= LastRoundGoldAward || Amount < 0) return false;
+    LastRoundGoldAward = Round;
     AddGold(Amount);
-    OnShopChanged.Broadcast();
     return true;
 }
 
-ETransactionResult AShopManager::RequestReroll()
+ETransactionResult AShopManager::ValidatePurchase(int32 Slot, int32 Revision, FShopOffer& Offer) const
 {
-    if (!CanTrade()) return ETransactionResult::WrongPhase;
-    if (bChanging) return ETransactionResult::Unavailable;
-    if (Gold < RerollCost) return ETransactionResult::InsufficientGold;
+    if (Revision != ShopRevision || !Offers.IsValidIndex(Slot) || Offers[Slot].UnitId.IsNone() || Offers[Slot].Cost <= 0)
+        return ETransactionResult::InvalidSelection;
+    Offer = Offers[Slot];
+    return Gold >= Offer.Cost ? ETransactionResult::Success : ETransactionResult::InsufficientGold;
+}
 
-    TGuardValue<bool> Guard(bChanging, true);
+ETransactionResult AShopManager::Reroll(int32 Round)
+{
+    if (Gold < RerollCost) return ETransactionResult::InsufficientGold;
     TArray<FShopOffer> NextOffers;
-    if (!GenerateOffers(CurrentRound, NextOffers)) return ETransactionResult::Unavailable;
+    if (!GenerateOffers(Round, NextOffers)) return ETransactionResult::Unavailable;
     AddGold(-RerollCost);
     Offers = MoveTemp(NextOffers);
     ++ShopRevision;
-    OnShopChanged.Broadcast();
     return ETransactionResult::Success;
 }
 
-ETransactionResult AShopManager::RequestShopLock(bool bLocked)
+void AShopManager::SetShopLock(bool bLocked)
 {
-    if (!CanTrade()) return ETransactionResult::WrongPhase;
-    if (bChanging) return ETransactionResult::Unavailable;
-    TGuardValue<bool> Guard(bChanging, true);
     bShopLocked = bLocked;
-    OnShopChanged.Broadcast();
-    return ETransactionResult::Success;
 }
 
+bool AShopManager::OpenRewards(int32 Round, TFunctionRef<bool(FName)> IsItemValid)
+{
+    if (Round <= LastRewardRound || !Rewards.IsEmpty()) return false;
+    TArray<FRewardOffer> Drawn;
+    if (!GenerateRewards(Drawn, IsItemValid)) return false;
+    Rewards = MoveTemp(Drawn);
+    LastRewardRound = Round;
+    ++RewardRevision;
+    return true;
+}
+
+bool AShopManager::GetReward(int32 Round, int32 Slot, int32 Revision, FRewardOffer& Reward) const
+{
+    if (Round != LastRewardRound || Revision != RewardRevision || !Rewards.IsValidIndex(Slot)) return false;
+    Reward = Rewards[Slot];
+    return true;
+}
+
+void AShopManager::CommitReward()
+{
+    Rewards.Reset();
+}
 FShopOffer AShopManager::GetOfferDefinition(FName UnitId) const
 {
     const FShopOffer* Offer = Catalog.FindByPredicate([UnitId](const FShopOffer& Entry)
@@ -197,15 +177,11 @@ void AShopManager::CreditSale(const FRosterUnit& Unit)
     AddGold(FMath::FloorToInt(FMath::Min(Unit.BaseCost * Rate, static_cast<double>(MAX_int32))));
 }
 
-void AShopManager::CommitPreparation(int32 Round, int32 DeploymentLimit, TArray<FShopOffer>&& NextOffers)
+void AShopManager::CommitPreparation(int32 Round, TArray<FShopOffer>&& NextOffers)
 {
-    if (CurrentRound == 0) Gold = FMath::Max(0, StartingGold);
-    CurrentRound = Round;
-    CurrentDeploymentLimit = DeploymentLimit;
-    Phase = EShopPhase::Preparation;
-    bRoundGoldGranted = false;
+    if (LastPreparedRound == 0) Gold = FMath::Max(0, StartingGold);
+    LastPreparedRound = Round;
     RewardedKills.Reset();
-    Rewards.Reset();
     if (!bShopLocked)
     {
         NextOffers.SetNum(ShopSlots);

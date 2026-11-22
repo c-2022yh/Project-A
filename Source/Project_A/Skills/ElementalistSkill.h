@@ -12,8 +12,6 @@ class PROJECT_A_API UElementalistSkill : public UUnitActiveSkill
     GENERATED_BODY()
 
 public:
-    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Elementalist")
-    EElementalForm DefaultForm = EElementalForm::Frost;
     UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Elementalist|Frost", meta=(ClampMin="1"))
     float FrostMaxMana = 45.f;
     UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Elementalist|Frost", meta=(ClampMin="0"))
@@ -53,15 +51,15 @@ public:
     TObjectPtr<UAnimMontage> FireCastMontage = nullptr;
 
     UFUNCTION(BlueprintPure, Category="Elementalist")
-    EElementalForm GetForm() const;
-    UFUNCTION(BlueprintCallable, Category="Elementalist")
-    bool SetForm(EElementalForm Form);
+    EElementalForm GetForm() const { return NextForm; }
     UFUNCTION(BlueprintImplementableEvent, Category="Elementalist")
     void OnFormChanged(EElementalForm Form);
     UFUNCTION(BlueprintImplementableEvent, Category="Elementalist")
     void OnMeteorTelegraph(ABoardTile* Center, const TArray<ABoardTile*>& Tiles, float DelaySeconds);
 
     virtual FUnitSkillDefinition BuildSettings() const override;
+    virtual void RefreshCastSettings() override;
+    virtual void ResetRuntime() override;
     virtual void ModifyMaxMana(float& MaxMana) const override;
     virtual void CustomizeEffectValues(TArray<float>& Values) const override;
     virtual ABattleUnitBase* SelectTarget_Implementation() const override;
@@ -71,6 +69,7 @@ public:
     virtual void Execute_Implementation(ABattleUnitBase* Target, int32 ActionId) override;
 
 private:
-    EElementalForm SelectedForm = EElementalForm::Unselected;
+    EElementalForm NextForm = EElementalForm::Frost;
+    EElementalForm CastingForm = EElementalForm::Frost;
     TWeakObjectPtr<ABoardTile> MeteorCenter;
 };

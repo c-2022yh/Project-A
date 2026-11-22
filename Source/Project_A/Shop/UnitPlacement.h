@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include "CoreMinimal.h"
 #include "ShopTypes.h"
@@ -7,7 +7,25 @@
 
 class ABattleUnitBase;
 
-// Implemented by the integration layer using the board and combat teams' APIs.
+// Integration contract for the board and combat teams.
+//
+// Unit API required from combat:
+//   GetEquipmentIds() returns the loadout held by the actual unit.
+//   ReplaceEquipment(Ids) validates definitions and capacity and recomputes effective
+//   stats from base + star modifiers + that loadout. Empty Ids unequips all.
+//   Resolve the unit by the stable roster GUID, including after combat actor rebinds.
+//   Expose the resulting values through GetUnitProfile. ItemManager.GetItem supplies
+//   immutable definitions. It stores only unequipped inventory.
+//
+// Board input API proposed for the placement team:
+//   TryMoveOwnedUnit(UnitId, Destination) reads GameMode permissions/limit and
+//   validates source and target, then stages moves for both units in a swap.
+//   Read bench availability from BenchManager. Use its ApplyChanges native entry
+//   point to commit bench occupancy with the board/actor edits. Board-to-bench
+//   requires an empty replacement loadout and a staged inventory return for each
+//   recalled unit. The placement coordinator needs an atomic inventory-return
+//   hook from the item side. This cross-boundary operation is pending team integration.
+//   BenchManager.RequestMove handles moves within the bench independently.
 UINTERFACE(BlueprintType, Blueprintable, meta=(ScriptName="ShopUnitPlacement"))
 class PROJECT_A_API UUnitPlacement : public UInterface
 {
@@ -26,23 +44,24 @@ public:
     FGuid GetOccupant(FUnitPosition Position) const;
 
     UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category="Shop|Placement")
-    FUnitPosition FindRewardTile(int32 DeploymentLimit) const;
+    bool GetUnitEquipment(FGuid Id, TArray<FName>& Equipment) const;
 
     UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category="Shop|Placement")
     bool GetUnitProfile(FGuid Id, FRosterUnitProfile& Profile) const;
 
     UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category="Shop|Placement")
     FGuid GetHoveredUnit() const;
-    // GUID에 대응하는 전투 Actor를 반환한다. 없으면 저장된 보유 기록만 사용한다.
+
     UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category="Shop|Placement")
     ABattleUnitBase* GetBattleUnit(FGuid Id) const;
 
-    // Apply the whole batch, including combat actor changes, or return false with no changes.
-    // The adapter validates occupancy and deployment again at commit time. A move into an
-    // occupied position is expressed as two Move edits in the same batch.
-    // Add/Update/Move는 Change.Unit.SkillProgress도 Actor에 복원해야 한다.
-    // 생성/복원한 원소술사는 Change.Unit.ElementalForm이 선택된 경우 해당 스킬의 SetForm에 전달한다.
-    // CanRestoreSkillProgress로 전체 배치를 사전 검사하고 성공할 때만 RestoreSkillProgress한다.
+    // Apply the whole batch synchronously, including equipment payloads and combat
+    // actor changes, or return false with no externally visible changes. Do not
+    // advance the phase or emit final success notifications until the caller commits.
+    // If equipment replacement is unsupported, reject the batch.
+    // BenchManager owns bench occupancy. The adapter applies actor changes and validates board-side edits.
+    // Validate SkillProgress with the rest of the batch, then restore it on the resulting actor.
+    // A move into an occupied position is expressed as two Move edits in the same batch.
     UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category="Shop|Placement")
     bool ApplyUnitChanges(const TArray<FRosterUnitChange>& Changes, EShopPhase Phase, int32 DeploymentLimit);
 };

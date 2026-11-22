@@ -1518,6 +1518,7 @@ bool ABattleUnitBase::TryCastSkill()
     {
         const FUnitSkillDefinition& Skill = SkillInstances[Index]->Settings;
         if (Skill.Trigger != EUnitTrigger::ManaFull || !SkillInstances.IsValidIndex(Index) || SkillInstances[Index]->Cooldown > 0.f) continue;
+        SkillInstances[Index]->RefreshCastSettings();
         ABattleUnitBase* Candidate = SkillInstances[Index]->SelectTarget();
         if (Candidate && !SkillInstances[Index]->CanUse(Candidate)) Candidate = nullptr;
         if (Candidate && (Chosen == INDEX_NONE || Skill.Priority > SkillInstances[Chosen]->Settings.Priority)) { Chosen = Index; Target = Candidate; }

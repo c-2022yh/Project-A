@@ -1,9 +1,8 @@
-﻿#pragma once
+#pragma once
 
 #include "CoreMinimal.h"
 #include "Engine/DataTable.h"
 #include "../Skills/UnitSkillProgress.h"
-#include "../Skills/ElementalForm.h"
 #include "ShopTypes.generated.h"
 
 UENUM(BlueprintType)
@@ -12,10 +11,28 @@ enum class EShopPhase : uint8
     Inactive, Preparation, Combat, Settlement, RewardSelection, Finished
 };
 
+USTRUCT(BlueprintType)
+struct FShopMatchState
+{
+    GENERATED_BODY()
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Shop")
+    EShopPhase Phase = EShopPhase::Inactive;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Shop")
+    int32 Round = 0;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Shop")
+    int32 DeploymentLimit = 0;
+
+    bool CanTrade() const { return Phase == EShopPhase::Preparation || Phase == EShopPhase::Combat; }
+    bool CanManageBoard() const { return Phase == EShopPhase::Preparation || Phase == EShopPhase::RewardSelection; }
+};
+
 UENUM(BlueprintType)
 enum class ETransactionResult : uint8
 {
-    Success, WrongPhase, InvalidSelection, InsufficientGold, NoSpace, Unavailable, ChangeRejected, FormChoiceRequired
+    Success, WrongPhase, InvalidSelection, InsufficientGold, NoSpace, Unavailable, ChangeRejected
 };
 
 UENUM(BlueprintType)
@@ -127,8 +144,6 @@ struct FRosterUnit
     // 기물 고유 스킬 기록. 합성 결과/새 전투 Actor에 이관하며 DT 설정과 구분한다.
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Shop")
     TArray<FUnitSkillProgress> SkillProgress;
-    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Shop")
-    EElementalForm ElementalForm = EElementalForm::Unselected;
 };
 
 UENUM(BlueprintType)
@@ -177,7 +192,10 @@ struct FRosterUnitChange
     FUnitPosition Destination;
 
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Shop")
-    FItemBonuses ItemBonuses;
+    bool bReplaceEquipment = false;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Shop")
+    TArray<FName> Equipment;
 
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Shop")
     float StarStatMultiplier = 1;

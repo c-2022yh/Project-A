@@ -1,22 +1,9 @@
-﻿#include "ShopTransactionManager.h"
+#include "ShopTransactionManager.h"
 #include "BenchManager.h"
-#include "RosterManager.h"
+#include "Engine/World.h"
+#include "ItemManager.h"
 #include "ShopManager.h"
-#include "../BattleUnitBase.h"
-#include "../Skills/ElementalistSkill.h"
-
-namespace
-{
-UElementalistSkill* FindElementalistSkill(UObject* Placement, FGuid UnitId)
-{
-    if (!IsValid(Placement)) return nullptr;
-    ABattleUnitBase* Actor = IUnitPlacement::Execute_GetBattleUnit(Placement, UnitId);
-    if (!IsValid(Actor)) return nullptr;
-    for (UUnitSkillBase* Skill : Actor->GetEquippedSkills())
-        if (auto* Elementalist = Cast<UElementalistSkill>(Skill)) return Elementalist;
-    return nullptr;
-}
-}
+#include "ShopMatchProgress.h"
 
 bool AShopTransactionManager::IsConfigured() const
 {
@@ -26,59 +13,73 @@ bool AShopTransactionManager::IsConfigured() const
         && Roster->Placement.GetObject()->GetClass()->ImplementsInterface(UUnitPlacement::StaticClass());
 }
 
-bool AShopTransactionManager::ApplyChanges(TArray<FRosterUnitChange>& Changes, AItemManager::FState&& ItemState,
-    EShopPhase Phase, int32 Limit)
+FShopMatchState AShopTransactionManager::GetMatchState() const
 {
-    for (FRosterUnitChange& Change : Changes)
-    {
-        if (Change.Edit != ERosterUnitEdit::Remove)
-            Change.ItemBonuses = Items->GetBonuses(ItemState, Change.Unit.Id);
-    }
+    return ReadShopMatchState(GetWorld());
+}
 
-    if (!Roster->Apply(Changes, Phase, Limit)) return false;
+bool AShopTransactionManager::CanStartRequest() const
+{
+    return IsConfigured() && !Shop->bChanging && !Roster->GetBench()->IsApplying();
+}
+
+bool AShopTransactionManager::CommitChanges(const TArray<FRosterUnitChange>& Changes, TArray<FName>&& Inventory,
+    const FShopMatchState& Match)
+{
+    if (!Roster->GetBench()->ApplyChanges(Changes, Match)) return false;
     Roster->Commit(Changes);
-    Items->Commit(MoveTemp(ItemState));
-    for (const FRosterUnitChange& Change : Changes)
-    {
-        if (Change.Edit == ERosterUnitEdit::Remove || Change.Unit.ElementalForm == EElementalForm::Unselected) continue;
-        if (UElementalistSkill* Skill = FindElementalistSkill(Roster->Placement.GetObject(), Change.Unit.Id);
-            Skill && IsValid(Skill->OwnerUnit) && Skill->OwnerUnit->UnitID == Change.Unit.UnitId
-                && Skill->OwnerUnit->GetWorld() == GetWorld())
-            Skill->SetForm(Change.Unit.ElementalForm);
-    }
+    Items->Commit(MoveTemp(Inventory));
     return true;
 }
 
-bool AShopTransactionManager::EnterPreparation(int32 Round, int32 DeploymentLimit)
+bool AShopTransactionManager::ApplyMerges(TArray<FRosterUnitChange>& Changes,
+    const TArray<ARosterManager::FMerge>& Merges, const FShopMatchState& Match)
 {
-    if (!IsConfigured() || Shop->bChanging || Round != Shop->CurrentRound + 1 || DeploymentLimit < 1)
-        return false;
-
-    const EShopPhase Phase = Shop->GetPhase();
-    if (Phase != EShopPhase::Inactive && Phase != EShopPhase::Settlement
-        && (Phase != EShopPhase::RewardSelection || !Shop->bRewardReceived)) return false;
-    if (Phase == EShopPhase::RewardSelection && Shop->GetDeploymentLimit() != DeploymentLimit) return false;
-
-    TGuardValue<bool> Guard(Shop->bChanging, true);
-    TArray<FShopOffer> NextOffers;
-    if (!Shop->bShopLocked && !Shop->Catalog.IsEmpty() && !Shop->GenerateOffers(Round, NextOffers)) return false;
-
-    TArray<FRosterUnitChange> Changes;
-    AItemManager::FState ItemState = Items->Snapshot();
-    TMap<FName, int32> Counts;
-    TArray<FName> UnitTypes;
-    for (const FRosterUnit& Unit : Roster->Units)
+    TArray<FName> Inventory = Items->GetInventory();
+    for (const ARosterManager::FMerge& Merge : Merges)
     {
-        if (Unit.Stars != 1) continue;
-        UnitTypes.AddUnique(Unit.UnitId);
-        ++Counts.FindOrAdd(Unit.UnitId);
-    }
-    for (FName UnitId : UnitTypes)
-        for (int32 Merge = 0; Merge < Counts.FindChecked(UnitId) / 3; ++Merge)
-            if (!PlanMerge(UnitId, nullptr, {}, Changes, ItemState)) return false;
+        TArray<FName> Inherited;
+        TArray<FUnitSkillProgress> SkillProgress;
+        for (FGuid Id : Merge.Materials)
+        {
+            TArray<FName> Equipped;
+            if (!Roster->GetUnitEquipment(Id, Equipped)) return false;
+            Inherited.Append(Equipped);
 
-    if (!ApplyChanges(Changes, MoveTemp(ItemState), EShopPhase::Preparation, DeploymentLimit)) return false;
-    Shop->CommitPreparation(Round, DeploymentLimit, MoveTemp(NextOffers));
+            // 재료를 제거하기 전에 현재 전투 기물의 성장 기록까지 합성 결과에 모은다.
+            FRosterUnit Material;
+            if (!Roster->GetUnit(Id, Material)
+                || !UnitSkillProgress::Merge(SkillProgress, Material.SkillProgress, SkillProgress)) return false;
+        }
+        Items->LimitInheritedEquipment(Inherited, Inventory);
+        FRosterUnitChange* Result = Changes.FindByPredicate([&Merge](const FRosterUnitChange& Change)
+        {
+            return Change.Unit.Id == Merge.Kept;
+        });
+        check(Result);
+        Result->bReplaceEquipment = Roster->GetPosition(Merge.Kept).Location == EUnitLocation::Board;
+        Result->Equipment = MoveTemp(Inherited);
+        Result->Unit.SkillProgress = MoveTemp(SkillProgress);
+    }
+    return CommitChanges(Changes, MoveTemp(Inventory), Match);
+}
+
+bool AShopTransactionManager::EnterPreparation()
+{
+    if (!CanStartRequest()) return false;
+    TGuardValue<bool> Guard(Shop->bChanging, true);
+    const FShopMatchState Match = GetMatchState();
+    if (Match.Phase != EShopPhase::Preparation || Match.Round <= Shop->LastPreparedRound
+        || Match.DeploymentLimit < 1 || !Shop->Rewards.IsEmpty()) return false;
+
+    TArray<FShopOffer> Offers;
+    if (!Shop->IsShopLocked() && !Shop->Catalog.IsEmpty() && !Shop->GenerateOffers(Match.Round, Offers)) return false;
+    TArray<FRosterUnitChange> Changes;
+    TArray<ARosterManager::FMerge> Merges;
+    Roster->PlanPendingMerges(Changes, Merges);
+    if (!ApplyMerges(Changes, Merges, Match)) return false;
+
+    Shop->CommitPreparation(Match.Round, MoveTemp(Offers));
     Roster->NotifyChanged();
     Shop->OnShopChanged.Broadcast();
     return true;
@@ -86,60 +87,89 @@ bool AShopTransactionManager::EnterPreparation(int32 Round, int32 DeploymentLimi
 
 ETransactionResult AShopTransactionManager::GrantStartingUnit(FName UnitId)
 {
-    if (!IsConfigured() || Shop->bChanging) return ETransactionResult::Unavailable;
-    if (Shop->GetPhase() != EShopPhase::Inactive) return ETransactionResult::WrongPhase;
-
+    if (!CanStartRequest()) return ETransactionResult::Unavailable;
     TGuardValue<bool> Guard(Shop->bChanging, true);
-    const ETransactionResult Result = AddUnit(Shop->GetOfferDefinition(UnitId), 1, false);
+    const FShopMatchState Match = GetMatchState();
+    if (Match.Phase != EShopPhase::Inactive) return ETransactionResult::WrongPhase;
+
+    const auto Result = AddUnit(Shop->GetOfferDefinition(UnitId), 1, Match);
     if (Result == ETransactionResult::Success) Roster->NotifyChanged();
     return Result;
 }
 
-bool AShopTransactionManager::BeginRewardSelection(int32 NextDeploymentLimit)
+bool AShopTransactionManager::OpenRewards()
 {
-    if (!IsConfigured() || Shop->bChanging || Shop->GetPhase() != EShopPhase::Settlement || NextDeploymentLimit < 1)
-        return false;
-
+    if (!CanStartRequest()) return false;
     TGuardValue<bool> Guard(Shop->bChanging, true);
-    TArray<FRewardOffer> Drawn;
-    if (!Shop->GenerateRewards(Drawn, [this](FName Id)
+    const FShopMatchState Match = GetMatchState();
+    if (Match.Phase != EShopPhase::RewardSelection) return false;
+
+    if (!Shop->OpenRewards(Match.Round, [this](FName Id)
     {
         FItemDefinition Item;
         return Items->GetItem(Id, Item);
     })) return false;
 
-    Shop->CurrentDeploymentLimit = NextDeploymentLimit;
-    Shop->Rewards = MoveTemp(Drawn);
-    ++Shop->RewardRevision;
-    Shop->bRewardReceived = false;
-    Shop->Phase = EShopPhase::RewardSelection;
     Shop->OnShopChanged.Broadcast();
     return true;
 }
 
 bool AShopTransactionManager::GrantKillReward(FGuid DefeatedEnemyId)
 {
-    if (!IsConfigured() || Shop->bChanging) return false;
-
+    if (!CanStartRequest()) return false;
     TGuardValue<bool> Guard(Shop->bChanging, true);
-    if (!Shop->CreditKill(DefeatedEnemyId)) return false;
+    if (GetMatchState().Phase != EShopPhase::Combat || !Shop->CreditKill(DefeatedEnemyId)) return false;
     Items->TryGrantKillDrop();
     Shop->OnShopChanged.Broadcast();
     return true;
 }
 
+bool AShopTransactionManager::GrantRoundGold(int32 Amount)
+{
+    if (!CanStartRequest()) return false;
+    TGuardValue<bool> Guard(Shop->bChanging, true);
+    const FShopMatchState Match = GetMatchState();
+    if (Match.Phase != EShopPhase::Settlement || !Shop->CreditRoundGold(Match.Round, Amount)) return false;
+    Shop->OnShopChanged.Broadcast();
+    return true;
+}
+
+ETransactionResult AShopTransactionManager::RequestReroll()
+{
+    if (!CanStartRequest()) return ETransactionResult::Unavailable;
+    TGuardValue<bool> Guard(Shop->bChanging, true);
+    const FShopMatchState Match = GetMatchState();
+    if (!Match.CanTrade() || Match.Round != Shop->LastPreparedRound) return ETransactionResult::WrongPhase;
+
+    const auto Result = Shop->Reroll(Match.Round);
+    if (Result == ETransactionResult::Success) Shop->OnShopChanged.Broadcast();
+    return Result;
+}
+
+ETransactionResult AShopTransactionManager::RequestShopLock(bool bLocked)
+{
+    if (!CanStartRequest()) return ETransactionResult::Unavailable;
+    TGuardValue<bool> Guard(Shop->bChanging, true);
+    const FShopMatchState Match = GetMatchState();
+    if (!Match.CanTrade() || Match.Round != Shop->LastPreparedRound) return ETransactionResult::WrongPhase;
+
+    Shop->SetShopLock(bLocked);
+    Shop->OnShopChanged.Broadcast();
+    return ETransactionResult::Success;
+}
+
 ETransactionResult AShopTransactionManager::RequestBuy(int32 Slot, int32 OfferRevision)
 {
-    if (!IsConfigured() || Shop->bChanging) return ETransactionResult::Unavailable;
-    if (!Shop->CanTrade()) return ETransactionResult::WrongPhase;
-    if (OfferRevision != Shop->GetShopRevision() || !Shop->Offers.IsValidIndex(Slot) || Shop->Offers[Slot].UnitId.IsNone())
-        return ETransactionResult::InvalidSelection;
-
-    const FShopOffer Offer = Shop->Offers[Slot];
-    if (Shop->GetGold() < Offer.Cost) return ETransactionResult::InsufficientGold;
-
+    if (!CanStartRequest()) return ETransactionResult::Unavailable;
     TGuardValue<bool> Guard(Shop->bChanging, true);
-    const ETransactionResult Result = AddUnit(Offer, 1, false);
+    const FShopMatchState Match = GetMatchState();
+    if (!Match.CanTrade() || Match.Round != Shop->LastPreparedRound) return ETransactionResult::WrongPhase;
+
+    FShopOffer Offer;
+    const auto Validation = Shop->ValidatePurchase(Slot, OfferRevision, Offer);
+    if (Validation != ETransactionResult::Success) return Validation;
+
+    const auto Result = AddUnit(Offer, 1, Match);
     if (Result != ETransactionResult::Success) return Result;
 
     Shop->CommitPurchase(Slot, Offer.Cost);
@@ -150,22 +180,24 @@ ETransactionResult AShopTransactionManager::RequestBuy(int32 Slot, int32 OfferRe
 
 ETransactionResult AShopTransactionManager::RequestSell(FGuid UnitId)
 {
-    if (!IsConfigured() || Shop->bChanging) return ETransactionResult::Unavailable;
-    const EShopPhase Phase = Shop->GetPhase();
-    if (!Shop->CanTrade() && Phase != EShopPhase::RewardSelection) return ETransactionResult::WrongPhase;
-
+    if (!CanStartRequest()) return ETransactionResult::Unavailable;
     TGuardValue<bool> Guard(Shop->bChanging, true);
+    const FShopMatchState Match = GetMatchState();
+    if (!Match.CanTrade() && !Match.CanManageBoard()) return ETransactionResult::WrongPhase;
+    if (Match.CanTrade() && Match.Round != Shop->LastPreparedRound) return ETransactionResult::WrongPhase;
+
     FRosterUnit Unit;
     if (!Roster->GetUnit(UnitId, Unit)) return ETransactionResult::InvalidSelection;
     const EUnitLocation Location = Roster->GetPosition(UnitId).Location;
     if (Location == EUnitLocation::None) return ETransactionResult::Unavailable;
-    if (Phase == EShopPhase::Combat && Location != EUnitLocation::Bench) return ETransactionResult::WrongPhase;
+    if (Match.Phase == EShopPhase::Combat && Location != EUnitLocation::Bench) return ETransactionResult::WrongPhase;
 
-    AItemManager::FState ItemState = Items->Snapshot();
-    ItemState.ReturnEquipment(UnitId);
-    TArray<FRosterUnitChange> Changes = { Roster->MakeChange(ERosterUnitEdit::Remove, Unit) };
-    if (!ApplyChanges(Changes, MoveTemp(ItemState), Phase, Shop->GetDeploymentLimit()))
-        return ETransactionResult::ChangeRejected;
+    TArray<FName> Equipped;
+    if (!Roster->GetUnitEquipment(UnitId, Equipped)) return ETransactionResult::Unavailable;
+    TArray<FName> Inventory = Items->GetInventory();
+    Items->PlanReturn(Inventory, Equipped);
+    const TArray<FRosterUnitChange> Changes = { Roster->MakeChange(ERosterUnitEdit::Remove, Unit) };
+    if (!CommitChanges(Changes, MoveTemp(Inventory), Match)) return ETransactionResult::ChangeRejected;
 
     Shop->CreditSale(Unit);
     Roster->NotifyChanged();
@@ -175,17 +207,17 @@ ETransactionResult AShopTransactionManager::RequestSell(FGuid UnitId)
 
 ETransactionResult AShopTransactionManager::RequestReward(int32 Slot, int32 SelectionRevision)
 {
-    if (!IsConfigured() || Shop->bChanging) return ETransactionResult::Unavailable;
-    if (Shop->GetPhase() != EShopPhase::RewardSelection) return ETransactionResult::WrongPhase;
-    if (Shop->bRewardReceived || SelectionRevision != Shop->GetRewardRevision() || !Shop->Rewards.IsValidIndex(Slot))
-        return ETransactionResult::InvalidSelection;
-
+    if (!CanStartRequest()) return ETransactionResult::Unavailable;
     {
         TGuardValue<bool> Guard(Shop->bChanging, true);
-        const FRewardOffer Reward = Shop->Rewards[Slot];
+        const FShopMatchState Match = GetMatchState();
+        if (Match.Phase != EShopPhase::RewardSelection) return ETransactionResult::WrongPhase;
+        FRewardOffer Reward;
+        if (!Shop->GetReward(Match.Round, Slot, SelectionRevision, Reward)) return ETransactionResult::InvalidSelection;
+
         if (Reward.Kind == ERewardKind::Unit)
         {
-            const auto Result = AddUnit(Shop->GetOfferDefinition(Reward.DefinitionId), Reward.Stars, true);
+            const auto Result = AddUnit(Shop->GetOfferDefinition(Reward.DefinitionId), Reward.Stars, Match);
             if (Result != ETransactionResult::Success) return Result;
         }
         else if (!Items->GrantItem(Reward.DefinitionId))
@@ -193,215 +225,23 @@ ETransactionResult AShopTransactionManager::RequestReward(int32 Slot, int32 Sele
             return ETransactionResult::Unavailable;
         }
 
-        Shop->bRewardReceived = true;
-        Shop->Rewards.Reset();
+        Shop->CommitReward();
         Roster->NotifyChanged();
         Shop->OnShopChanged.Broadcast();
     }
 
-    // Progression can enter preparation after the reward has committed.
     OnRewardReceived.Broadcast();
     return ETransactionResult::Success;
 }
 
-ETransactionResult AShopTransactionManager::AddUnit(const FShopOffer& Offer, int32 Stars, bool bReward)
+ETransactionResult AShopTransactionManager::AddUnit(const FShopOffer& Offer, int32 Stars, const FShopMatchState& Match)
 {
-    if (Offer.UnitId.IsNone() || Offer.Cost <= 0 || Stars < 1 || Stars > 2) return ETransactionResult::InvalidSelection;
-
-    FUnitPosition Destination;
-    if (bReward)
-    {
-        Destination = IUnitPlacement::Execute_FindRewardTile(Roster->Placement.GetObject(), Shop->GetDeploymentLimit());
-        if (Destination.Location != EUnitLocation::Board || Destination.Row < 0 || Destination.Column < 0
-            || Roster->FindOccupant(Destination).IsValid()) Destination = {};
-    }
-    if (Destination.Location == EUnitLocation::None) Destination = Roster->GetBench()->FindFreeSlot();
-
-    FRosterUnit Unit;
-    Unit.Id = FGuid::NewGuid();
-    Unit.UnitId = Offer.UnitId;
-    Unit.Stars = Stars;
-    Unit.BaseCost = Offer.Cost;
-
     TArray<FRosterUnitChange> Changes;
-    AItemManager::FState ItemState = Items->Snapshot();
-    if (Stars == 1 && Shop->GetPhase() == EShopPhase::Preparation)
-        if (!PlanMerge(Unit.UnitId, &Unit, Destination, Changes, ItemState)) return ETransactionResult::ChangeRejected;
-    if (Changes.IsEmpty())
-    {
-        if (Destination.Location == EUnitLocation::None) return ETransactionResult::NoSpace;
-        Changes.Add(Roster->MakeChange(ERosterUnitEdit::Add, Unit, Destination));
-    }
-
-    return ApplyChanges(Changes, MoveTemp(ItemState), Shop->GetPhase(), Shop->GetDeploymentLimit())
-        ? ETransactionResult::Success : ETransactionResult::ChangeRejected;
-}
-
-bool AShopTransactionManager::PlanMerge(FName UnitId, const FRosterUnit* Incoming, FUnitPosition Destination,
-    TArray<FRosterUnitChange>& Changes, AItemManager::FState& ItemState) const
-{
-    auto Materials = Roster->FindMergeMaterials(UnitId, Incoming ? 2 : 3, Changes);
-    if (Incoming) Materials.Add(Incoming);
-    if (Materials.Num() != 3) return true;
-
-    // 남길 위치와 무관하게 재료 전부의 최신 실행 기록을 읽는다.
-    TArray<FUnitSkillProgress> Progress;
-    for (const FRosterUnit* Material : Materials)
-    {
-        FRosterUnit Snapshot;
-        if (Material == Incoming) Snapshot = *Incoming;
-        else if (!Roster->GetUnit(Material->Id, Snapshot)) return false;
-        if (!UnitSkillProgress::Merge(Progress, Snapshot.SkillProgress, Progress)) return false;
-    }
-
-    const FRosterUnit* Kept = Materials[0];
-    for (const FRosterUnit* Material : Materials)
-    {
-        const FUnitPosition Position = Material == Incoming ? Destination : Roster->GetPosition(Material->Id);
-        if (Position.Location == EUnitLocation::Board)
-        {
-            Kept = Material;
-            break;
-        }
-    }
-
-    FRosterUnit Upgraded = *Kept;
-    Upgraded.Stars = 2;
-    Upgraded.SkillProgress = MoveTemp(Progress);
-    TArray<FGuid> MaterialIds;
-    for (const FRosterUnit* Material : Materials)
-    {
-        MaterialIds.Add(Material->Id);
-        if (Material != Kept && Material != Incoming)
-            Changes.Add(Roster->MakeChange(ERosterUnitEdit::Remove, *Material));
-    }
-    ItemState.InheritEquipment(MaterialIds, Kept->Id);
-    Changes.Add(Roster->MakeChange(Kept == Incoming ? ERosterUnitEdit::Add : ERosterUnitEdit::Update, Upgraded, Destination));
-    return true;
-}
-
-ETransactionResult AShopTransactionManager::RequestMoveToBench(FGuid UnitId, int32 Slot)
-{
-    return RequestMove(UnitId, UBenchManager::SlotPosition(Slot));
-}
-
-ETransactionResult AShopTransactionManager::RequestMove(FGuid UnitId, FUnitPosition Destination)
-{
-    return RequestMoveInternal(UnitId, Destination, nullptr, EElementalForm::Unselected);
-}
-
-bool AShopTransactionManager::TryMoveRegisteredElementalist(ABattleUnitBase* Unit, FUnitPosition Destination,
-    ETransactionResult& Result)
-{
-    if (!IsConfigured() || !IsValid(Unit) || Unit->GetWorld() != GetWorld()) return false;
-    const bool bElementalist = Unit->GetEquippedSkills().ContainsByPredicate(
-        [](const UUnitSkillBase* Skill) { return Cast<UElementalistSkill>(Skill) != nullptr; });
-    if (!bElementalist) return false;
-
-    for (const FRosterUnit& Entry : Roster->Units)
-    {
-        if (Entry.UnitId != Unit->UnitID || IUnitPlacement::Execute_GetBattleUnit(Roster->Placement.GetObject(), Entry.Id) != Unit) continue;
-        const FGuid Id = Entry.Id;
-        Result = RequestMove(Id, Destination);
-        return true;
-    }
-    return false;
-}
-
-bool AShopTransactionManager::IsElementalist(const FRosterUnit& Unit) const
-{
-    return Unit.ElementalForm != EElementalForm::Unselected || (!ElementalistUnitId.IsNone() && Unit.UnitId == ElementalistUnitId)
-        || FindElementalistSkill(Roster->Placement.GetObject(), Unit.Id);
-}
-
-bool AShopTransactionManager::GetPendingElementalPlacement(FGuid& UnitId, FUnitPosition& Destination,
-    EElementalForm& PreviousForm, int32& Revision) const
-{
-    if (!IsConfigured() || !PendingElementalPlacement.IsSet() || Shop->GetPhase() != EShopPhase::Preparation
-        || Shop->GetRound() != PendingElementalPlacement->Round) return false;
-    FRosterUnit Unit;
-    if (!Roster->GetUnit(PendingElementalPlacement->UnitId, Unit)) return false;
-    UnitId = PendingElementalPlacement->UnitId;
-    Destination = PendingElementalPlacement->Destination;
-    PreviousForm = Unit.ElementalForm;
-    Revision = PendingElementalPlacement->Revision;
-    return true;
-}
-
-ETransactionResult AShopTransactionManager::RequestElementalPlacement(EElementalForm Form, int32 Revision)
-{
-    if (!IsConfigured() || Shop->bChanging) return ETransactionResult::Unavailable;
-    if (Shop->GetPhase() != EShopPhase::Preparation) return ETransactionResult::WrongPhase;
-    if (!PendingElementalPlacement.IsSet() || PendingElementalPlacement->Round != Shop->GetRound()
-        || PendingElementalPlacement->Revision != Revision
-        || (Form != EElementalForm::Frost && Form != EElementalForm::Fire)) return ETransactionResult::InvalidSelection;
-
-    const FPendingElementalPlacement Choice = PendingElementalPlacement.GetValue();
-    PendingElementalPlacement.Reset();
-    return RequestMoveInternal(Choice.UnitId, Choice.Destination, &Choice, Form);
-}
-
-void AShopTransactionManager::CancelElementalPlacement()
-{
-    if (IsValid(Shop) && !Shop->bChanging) PendingElementalPlacement.Reset();
-}
-
-ETransactionResult AShopTransactionManager::RequestMoveInternal(FGuid UnitId, FUnitPosition Destination,
-    const FPendingElementalPlacement* Confirmed, EElementalForm Form)
-{
-    if (!IsConfigured() || Shop->bChanging) return ETransactionResult::Unavailable;
-    if (!Shop->CanTrade() && !Shop->CanManageBoard()) return ETransactionResult::WrongPhase;
-    if (!Roster->IsPositionValid(Destination)) return ETransactionResult::InvalidSelection;
-
-    TGuardValue<bool> Guard(Shop->bChanging, true);
-    FRosterUnit Unit;
-    const FUnitPosition Source = Roster->GetPosition(UnitId);
-    if (!Roster->GetUnit(UnitId, Unit) || !Roster->IsPositionValid(Source)) return ETransactionResult::InvalidSelection;
-    const FGuid OccupantId = Roster->FindOccupant(Destination);
-    const bool bElementalDeployment = Source.Location == EUnitLocation::Bench
-        && Destination.Location == EUnitLocation::Board && IsElementalist(Unit);
-    if (Confirmed)
-    {
-        if (!bElementalDeployment || Source.Column != Confirmed->Source.Column || OccupantId.IsValid())
-            return ETransactionResult::ChangeRejected;
-        Unit.ElementalForm = Form;
-    }
-    else if (bElementalDeployment && Shop->GetPhase() == EShopPhase::Preparation)
-    {
-        if (OccupantId.IsValid()) return ETransactionResult::NoSpace;
-        PendingElementalPlacement = FPendingElementalPlacement{UnitId, Source, Destination, Shop->GetRound(), ++ElementalPlacementRevision};
-        return ETransactionResult::FormChoiceRequired;
-    }
-    if (Shop->GetPhase() == EShopPhase::Combat
-        && (Source.Location != EUnitLocation::Bench || Destination.Location != EUnitLocation::Bench))
-        return ETransactionResult::WrongPhase;
-    if (Source.Location == Destination.Location && Source.Column == Destination.Column
-        && (Source.Location == EUnitLocation::Bench || Source.Row == Destination.Row))
-        return ETransactionResult::Success;
-
-    TArray<FRosterUnitChange> Changes;
-    AItemManager::FState ItemState = Items->Snapshot();
-    const auto AddMove = [&](const FRosterUnit& CurrentUnit, FUnitPosition Target)
-    {
-        if (Target.Location == EUnitLocation::Bench) ItemState.ReturnEquipment(CurrentUnit.Id);
-        Changes.Add(Roster->MakeChange(ERosterUnitEdit::Move, CurrentUnit, Target));
-    };
-
-    if (OccupantId.IsValid())
-    {
-        FRosterUnit Occupant;
-        if (!Roster->GetUnit(OccupantId, Occupant)) return ETransactionResult::ChangeRejected;
-        if (Shop->GetPhase() == EShopPhase::Preparation && Source.Location == EUnitLocation::Board
-            && Destination.Location == EUnitLocation::Bench && IsElementalist(Occupant)) return ETransactionResult::ChangeRejected;
-        AddMove(Occupant, Source);
-    }
-    AddMove(Unit, Destination);
-    if (!ApplyChanges(Changes, MoveTemp(ItemState), Shop->GetPhase(), Shop->GetDeploymentLimit()))
-        return ETransactionResult::ChangeRejected;
-
-    Roster->NotifyChanged();
-    if (PendingElementalPlacement.IsSet() && PendingElementalPlacement->UnitId == UnitId) PendingElementalPlacement.Reset();
-    return ETransactionResult::Success;
+    TArray<ARosterManager::FMerge> Merges;
+    const auto Plan = Roster->PlanAdmission(Offer, Stars, Roster->GetBench()->FindFreeSlot(),
+        Match.Phase == EShopPhase::Preparation, Changes, Merges);
+    if (Plan != ETransactionResult::Success) return Plan;
+    return ApplyMerges(Changes, Merges, Match) ? ETransactionResult::Success : ETransactionResult::ChangeRejected;
 }
 
 ETransactionResult AShopTransactionManager::RequestEquip(FGuid UnitId, FName ItemId)
@@ -416,21 +256,23 @@ ETransactionResult AShopTransactionManager::RequestUnequip(FGuid UnitId, int32 S
 
 ETransactionResult AShopTransactionManager::ChangeEquipment(FGuid UnitId, FName ItemId, TOptional<int32> UnequipSlot)
 {
-    if (!IsConfigured() || Shop->bChanging) return ETransactionResult::Unavailable;
-    if (!Shop->CanManageBoard()) return ETransactionResult::WrongPhase;
-
+    if (!CanStartRequest()) return ETransactionResult::Unavailable;
     TGuardValue<bool> Guard(Shop->bChanging, true);
+    const FShopMatchState Match = GetMatchState();
+    if (!Match.CanManageBoard()) return ETransactionResult::WrongPhase;
+
     FRosterUnit Unit;
     if (!Roster->GetUnit(UnitId, Unit) || Roster->GetPosition(UnitId).Location != EUnitLocation::Board)
         return ETransactionResult::InvalidSelection;
 
-    AItemManager::FState ItemState = Items->Snapshot();
-    const auto Result = Items->PlanEquipmentChange(ItemState, UnitId, ItemId, UnequipSlot);
+    auto Change = Roster->MakeChange(ERosterUnitEdit::Update, Unit);
+    if (!Roster->GetUnitEquipment(UnitId, Change.Equipment)) return ETransactionResult::Unavailable;
+    TArray<FName> Inventory = Items->GetInventory();
+    const auto Result = Items->PlanEquipmentChange(Inventory, Change.Equipment, ItemId, UnequipSlot);
     if (Result != ETransactionResult::Success) return Result;
 
-    TArray<FRosterUnitChange> Changes = { Roster->MakeChange(ERosterUnitEdit::Update, Unit) };
-    if (!ApplyChanges(Changes, MoveTemp(ItemState), Shop->GetPhase(), Shop->GetDeploymentLimit()))
-        return ETransactionResult::ChangeRejected;
-
+    Change.bReplaceEquipment = true;
+    if (!CommitChanges({ Change }, MoveTemp(Inventory), Match)) return ETransactionResult::ChangeRejected;
+    Roster->NotifyChanged();
     return ETransactionResult::Success;
 }

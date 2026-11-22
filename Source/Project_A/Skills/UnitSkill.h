@@ -25,6 +25,7 @@ public:
     virtual UWorld* GetWorld() const override;
     // 개별 스킬의 전용 BP 항목을 공통 시전 설정으로 변환한다. 초기화 때 한 번 호출한다.
     virtual FUnitSkillDefinition BuildSettings() const;
+    virtual void RefreshCastSettings() {}
     virtual bool RequiresLivingCastTarget() const { return true; }
     virtual void PrepareCast(ABattleUnitBase* Target, int32 ActionId) {}
     virtual void BeginCast(int32 ActionId) {}
@@ -52,7 +53,7 @@ public:
     virtual float GetHealthBasedAttackSpeedBonus(float HealthRatio) const { return 0.f; }
     virtual bool MergePersistentProgress(const FUnitSkillProgress& Kept, const FUnitSkillProgress& Material, FUnitSkillProgress& Out) const;
     void ClearExecution();
-    void ResetRuntime();
+    virtual void ResetRuntime();
     UFUNCTION(BlueprintNativeEvent, Category="Skill") bool CanUse(ABattleUnitBase* Target) const;
     virtual bool CanUse_Implementation(ABattleUnitBase* Target) const;
     UFUNCTION(BlueprintNativeEvent, Category="Skill") ABattleUnitBase* SelectTarget() const;

@@ -1,8 +1,9 @@
-﻿#include "ShopTestGameMode.h"
+#include "ShopTestGameMode.h"
 #include "TestPlacement.h"
 #include "../BenchManager.h"
 #include "../RosterManager.h"
 #include "../ShopManager.h"
+#include "../ItemManager.h"
 #include "../ShopPanel.h"
 #include "Engine/GameViewportClient.h"
 #include "InputKeyEventArgs.h"
@@ -68,7 +69,8 @@ void AShopTestGameMode::BeginPlay()
     Transactions->Shop = Shop;
     Transactions->Roster = Roster;
     Transactions->Items = Items;
-    if (ensure(Transactions->EnterPreparation(1, 2)))
+    Match = { EShopPhase::Preparation, 1, 2 };
+    if (ensure(Transactions->EnterPreparation()))
     {
         InputViewport = GetWorld()->GetGameViewport();
         if (InputViewport.IsValid())
@@ -115,7 +117,7 @@ void AShopTestGameMode::HandleBenchClick(const FInputKeyEventArgs& Event)
         ? GetUnitPosition_Implementation(ClickedPiece).Column
         : BenchTiles.IndexOfByPredicate([&Hit](const AStaticMeshActor* Tile) { return Tile == Hit.GetActor(); });
     if (Slot == INDEX_NONE
-        || Transactions->RequestMoveToBench(SelectedPiece, Slot) == ETransactionResult::Success)
+        || Transactions->Roster->GetBench()->RequestMove(SelectedPiece, Slot) == ETransactionResult::Success)
         SelectedPiece.Invalidate();
 }
 

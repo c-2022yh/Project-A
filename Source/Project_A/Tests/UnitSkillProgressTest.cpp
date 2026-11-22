@@ -8,7 +8,10 @@
 #include "../Shop/ShopTransactionManager.h"
 #include "../Shop/ShopOdds.h"
 #include "../Shop/Tests/TestPlacement.h"
+#include "../Shop/Tests/ShopTestGameMode.h"
+#include "../Shop/BenchManager.h"
 #include "Engine/Engine.h"
+#include "Engine/GameInstance.h"
 #include "Engine/World.h"
 #include "Engine/DataTable.h"
 
@@ -36,10 +39,19 @@ namespace SkillProgressTests
         AShopManager* Shop;
         AShopTransactionManager* Transactions;
         UTestPlacement* Placement;
+        AShopTestGameMode* Mode;
         FFixture()
         {
             World = UWorld::CreateWorld(EWorldType::Game, false);
-            GEngine->CreateNewWorldContext(EWorldType::Game).SetCurrentWorld(World);
+            FWorldContext& Context = GEngine->CreateNewWorldContext(EWorldType::Game);
+            Context.SetCurrentWorld(World);
+            Context.OwningGameInstance = NewObject<UGameInstance>(GEngine);
+            World->SetGameInstance(Context.OwningGameInstance);
+            FURL URL;
+            URL.AddOption(TEXT("game=/Script/Project_A.ShopTestGameMode"));
+            World->SetGameMode(URL);
+            World->InitializeActorsForPlay(URL);
+            Mode = Cast<AShopTestGameMode>(World->GetAuthGameMode());
             Table = NewObject<UDataTable>(World); Table->RowStruct = FUnitDefinition::StaticStruct();
             FUnitDefinition Data;
             Data.SkillClasses = { UHeroStrikeSkill::StaticClass(), UHeroGrowthPassiveSkill::StaticClass() };
@@ -55,6 +67,12 @@ namespace SkillProgressTests
             Transactions->Shop = Shop; Transactions->Roster = Roster; Transactions->Items = World->SpawnActor<AItemManager>();
         }
         ~FFixture() { World->BeginTearingDown(); GEngine->DestroyWorldContext(World); World->DestroyWorld(false); }
+        bool Prepare()
+        {
+            if (!Mode) return false;
+            Mode->Match = { EShopPhase::Preparation, 1, 2 };
+            return Transactions->EnterPreparation();
+        }
         ABattleUnitBase* Spawn(int32 Count, bool bEvolved = false)
         {
             auto* Unit = World->SpawnActor<ABattleUnitBase>();
@@ -116,15 +134,17 @@ bool FSkillProgressDeferredMergeTest::RunTest(const FString& Parameters)
     if (!TestNotNull(TEXT("Kept actor"), Kept) || !TestNotNull(TEXT("Consumed actor"), Consumed)) return false;
     FRosterUnitChange Move; Move.Edit = ERosterUnitEdit::Move; Move.Unit = Units[0];
     Move.Destination = {EUnitLocation::Board, 0, 0};
-    TestTrue(TEXT("Keep deployed identity"), F.Placement->ApplyUnitChanges_Implementation({Move}, EShopPhase::Inactive, 2));
+    if (!TestNotNull(TEXT("Shop match state owner"), F.Mode)) return false;
+    F.Mode->Match = { EShopPhase::Preparation, 1, 2 };
+    TestTrue(TEXT("Keep deployed identity"), F.Roster->GetBench()->ApplyChanges({Move}, F.Mode->Match));
     F.Placement->bReject = true;
-    TestFalse(TEXT("Rejected batch blocks deferred merge"), F.Transactions->EnterPreparation(1, 2));
+    TestFalse(TEXT("Rejected batch blocks deferred merge"), F.Prepare());
     TestEqual(TEXT("Rejected merge retains three units"), F.Roster->GetUnits().Num(), 3);
     TestEqual(TEXT("Rejected merge leaves kept progress alone"), Growth(Kept)->TotalParticipations, 4);
     TestFalse(TEXT("Rejected merge leaves evolution alone"), Growth(Kept)->bEvolved);
     TestEqual(TEXT("Rejected merge leaves star alone"), Kept->StarLevel, 1);
     F.Placement->bReject = false;
-    TestTrue(TEXT("Deferred merge commits"), F.Transactions->EnterPreparation(1, 2));
+    TestTrue(TEXT("Deferred merge commits"), F.Prepare());
     const auto Merged = F.Roster->GetUnits();
     if (!TestEqual(TEXT("One merged unit"), Merged.Num(), 1)) return false;
     TestEqual(TEXT("Board identity retained"), Merged[0].Id, Units[0].Id);
@@ -143,7 +163,7 @@ bool FSkillProgressPurchaseMergeTest::RunTest(const FString& Parameters)
 {
     using namespace SkillProgressTests;
     FFixture F;
-    if (!TestTrue(TEXT("Preparation"), F.Transactions->EnterPreparation(1, 2))) return false;
+    if (!TestTrue(TEXT("Preparation"), F.Prepare())) return false;
     const int32 Revision = F.Shop->GetShopRevision();
     for (int32 Slot = 0; Slot < 2; ++Slot)
         if (!TestEqual(TEXT("Buy material"), F.Transactions->RequestBuy(Slot, Revision), ETransactionResult::Success)) return false;
@@ -160,8 +180,9 @@ bool FSkillProgressPurchaseMergeTest::RunTest(const FString& Parameters)
     TestEqual(TEXT("Purchase charged once"), F.Shop->GetGold(), 17);
     TestEqual(TEXT("Purchase merges live count"), Growth(Kept)->TotalParticipations, 7);
     TestTrue(TEXT("New combat growth"), Kept->RestoreSkillProgress({State(9)}));
-    TestEqual(TEXT("Move snapshots latest record"), F.Transactions->RequestMoveToBench(Units[0].Id, 3), ETransactionResult::Success);
-    TestEqual(TEXT("Move committed latest count"), F.Roster->GetUnits()[0].SkillProgress[0].Counters.FindChecked(TEXT("Participations")), 9);
+    FRosterUnit Snapshot;
+    if (!TestTrue(TEXT("Read the latest live record"), F.Roster->GetUnit(Units[0].Id, Snapshot))) return false;
+    TestEqual(TEXT("Roster reads the live count before a move or merge"), Snapshot.SkillProgress[0].Counters.FindChecked(TEXT("Participations")), 9);
     Kept->RestoreSkillProgress({State(10, true)});
     TestTrue(TEXT("Cache before destruction"), F.Roster->CacheUnitSkillProgress(Units[0].Id));
     F.Placement->BattleUnits.Remove(Units[0].Id); Kept->Destroy();

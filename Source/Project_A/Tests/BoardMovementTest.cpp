@@ -182,26 +182,30 @@ bool FElementalistMeteorTest::RunTest(const FString& Parameters)
     using namespace BoardMovementTests;
     FFixture F;
     ABattleUnitBase* Caster = F.Spawn(EBattleTeam::Player, F.Board->GetTile(0, 0), 20.f, UElementalistSkill::StaticClass());
+    ABattleUnitBase* FrostTarget = F.Spawn(EBattleTeam::Enemy, F.Board->GetTile(3, 0));
     ABattleUnitBase* Center = F.Spawn(EBattleTeam::Enemy, F.Board->GetTile(5, 2));
     ABattleUnitBase* Inner = F.Spawn(EBattleTeam::Enemy, F.Board->GetTile(5, 3));
     ABattleUnitBase* Outer = F.Spawn(EBattleTeam::Enemy, F.Board->GetTile(5, 4));
-    if (!Caster || !Center || !Inner || !Outer) { AddError(TEXT("Could not deploy meteor test units")); return false; }
+    if (!Caster || !FrostTarget || !Center || !Inner || !Outer) { AddError(TEXT("Could not deploy meteor test units")); return false; }
     auto* Skill = Cast<UElementalistSkill>(Caster->GetEquippedSkills()[0]);
     if (!TestNotNull(TEXT("Elementalist skill"), Skill)) return false;
     TestEqual(TEXT("Default Frost max mana"), Caster->FinalStats.MaxMana, 45.f);
-    TestTrue(TEXT("Choose Fire in preparation"), Skill->SetForm(EElementalForm::Fire));
-    TestEqual(TEXT("Fire max mana"), Caster->FinalStats.MaxMana, 100.f);
-    TestTrue(TEXT("Fire selection survives a round reset"), Caster->ResetForRound() && Skill->GetForm() == EElementalForm::Fire);
-    if (!TestTrue(TEXT("Caster placed for combat"), Caster->PlaceOnTile(F.Board->GetTile(0, 0)))) return false;
     Caster->SetStarLevel(2);
     FUnitStatModifier AP;
     AP.AbilityPower = 100.f;
     Caster->ApplyUpgrade(TEXT("AP"), AP);
-    for (ABattleUnitBase* Unit : {Caster, Center, Inner, Outer}) Unit->StartCombat();
-    TestFalse(TEXT("Cannot change element midfight"), Skill->SetForm(EElementalForm::Frost));
+    for (ABattleUnitBase* Unit : {Caster, FrostTarget, Center, Inner, Outer}) Unit->StartCombat();
+    Caster->CurrentTarget = FrostTarget;
+    Caster->GainMana(45.f);
+    if (!TestTrue(TEXT("Each combat begins with ice lance"), Caster->TryCastSkill())) return false;
+    const int32 FrostCast = Caster->ActiveActionId;
+    TestEqual(TEXT("Starting ice lance raises the next mana threshold"), Caster->FinalStats.MaxMana, 100.f);
+    TestTrue(TEXT("The first cast still releases ice lance"), Caster->CommitSkillEffect(FrostCast));
+    Caster->FinishAction(FrostCast);
     Caster->CurrentTarget = Center;
     Caster->GainMana(100.f);
     if (!TestTrue(TEXT("Begins meteor in combat"), Caster->TryCastSkill())) return false;
+    TestEqual(TEXT("Starting meteor restores the ice lance threshold"), Caster->FinalStats.MaxMana, 45.f);
     TestFalse(TEXT("Meteor was already scheduled at cast start"), Caster->CommitSkillEffect(Caster->ActiveActionId));
     Caster->Tick(0.8f);
     TestTrue(TEXT("Caster can resume fighting before the meteor lands"), Caster->ActionState != EUnitActionState::Casting);
@@ -217,6 +221,7 @@ bool FElementalistMeteorTest::RunTest(const FString& Parameters)
     TestEqual(TEXT("The current target wins the tie and takes full 450 percent AP"), Center->CurrentHP, 550.f);
     TestEqual(TEXT("Distance one takes 65 percent"), Inner->CurrentHP, 707.5f);
     TestEqual(TEXT("Distance two takes 40 percent"), Outer->CurrentHP, 820.f);
+    TestTrue(TEXT("Round reset starts the spell sequence with frost"), Caster->ResetForRound() && Skill->GetForm() == EElementalForm::Frost);
     return true;
 }
 

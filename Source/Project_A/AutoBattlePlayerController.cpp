@@ -8,24 +8,9 @@
 #include "Components/CapsuleComponent.h"
 #include "DrawDebugHelpers.h"
 #include "Engine/World.h"
-#include "EngineUtils.h"
 #include "GameFramework/HUD.h"
 #include "Kismet/GameplayStatics.h"
 #include "Shop/ShopPanel.h"
-#include "Shop/ShopTransactionManager.h"
-
-namespace
-{
-    TOptional<ETransactionResult> MoveRegisteredElementalist(ABattleUnitBase* Unit, FUnitPosition Position)
-    {
-        for (TActorIterator<AShopTransactionManager> It(Unit->GetWorld()); It; ++It)
-        {
-            ETransactionResult Result;
-            if (It->TryMoveRegisteredElementalist(Unit, Position, Result)) return Result;
-        }
-        return {};
-    }
-}
 
 // Drop callbacks see the final placement before receiving the drag-ended notification.
 struct AAutoBattlePlayerController::FScopedDragNotifications
@@ -205,19 +190,7 @@ bool AAutoBattlePlayerController::PlaceSelectedUnitOnTile(ABoardTile* Tile)
     if (DragSessionRevision != ExpectedRevision || IsUnitDragActive()
         || !IsValid(Unit) || SelectedUnit != Unit || !IsValid(Tile)) return false;
     ABoardManager* Board = GetBoardManager();
-    if (!IsValid(Board)) return false;
-    if (Board->IsPlacementEnabled() && Board->CanInteractWithUnit(Unit) && Tile->OwningBoard == Board
-        && Tile->TeamType == EBoardTileTeam::Player)
-    {
-        const auto Result = MoveRegisteredElementalist(Unit, {EUnitLocation::Board, Tile->Row, Tile->Column});
-        if (Result.IsSet())
-        {
-            if (*Result != ETransactionResult::Success && *Result != ETransactionResult::FormChoiceRequired) return false;
-            if (SelectedUnit == Unit && !bUnitDragPending) ClearSelection();
-            return true;
-        }
-    }
-    if (!Board->TryPlaceUnitOnTile(Unit, Tile)) return false;
+    if (!IsValid(Board) || !Board->TryPlaceUnitOnTile(Unit, Tile)) return false;
     // A successful placement event may select a different unit or begin a new drag.
     if (SelectedUnit == Unit && !bUnitDragPending) ClearSelection();
     return true;
@@ -232,18 +205,7 @@ bool AAutoBattlePlayerController::MoveSelectedUnitToBench(ABenchTile* Slot)
     if (DragSessionRevision != ExpectedRevision || IsUnitDragActive()
         || !IsValid(Unit) || SelectedUnit != Unit || !IsValid(Slot)) return false;
     ABoardManager* Board = GetBoardManager();
-    if (!IsValid(Board)) return false;
-    if (Board->IsPlacementEnabled() && Board->CanInteractWithUnit(Unit) && Board->GetBenchSlot(Slot->SlotIndex) == Slot)
-    {
-        const auto Result = MoveRegisteredElementalist(Unit, {EUnitLocation::Bench, INDEX_NONE, Slot->SlotIndex});
-        if (Result.IsSet())
-        {
-            if (*Result != ETransactionResult::Success) return false;
-            if (SelectedUnit == Unit && !bUnitDragPending) ClearSelection();
-            return true;
-        }
-    }
-    if (!Board->TryMoveUnitToBench(Unit, Slot)) return false;
+    if (!IsValid(Board) || !Board->TryMoveUnitToBench(Unit, Slot)) return false;
     if (SelectedUnit == Unit && !bUnitDragPending) ClearSelection();
     return true;
 }
