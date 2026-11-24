@@ -255,6 +255,7 @@ public:
     UFUNCTION(BlueprintCallable, Category="Board|Movement") void PruneInvalidReservations();
 
 private:
+    friend class UMainMapShopPlacement;
 
     friend class ABoardTile;
     struct FMoveReservation

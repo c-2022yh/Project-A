@@ -6,6 +6,7 @@
 
 class ABattleUnitBase;
 class UTexture2D;
+struct FItemDefinition;
 
 // 머리 위 상태 전용 공통 위젯. 전투/상점 상태를 소유하지 않고 전달받은 값을 표시한다.
 UCLASS(Blueprintable)
@@ -30,6 +31,7 @@ public:
     UFUNCTION(BlueprintCallable, Category="Unit Status") void RefreshStatus();
     // 실제 아이템 소유권은 ItemManager에 둔다. 통합 담당이 장착 변경 시 아이콘만 전달한다.
     UFUNCTION(BlueprintCallable, Category="Unit Status") void SetItemIcons(const TArray<UTexture2D*>& Icons);
+    void SetEquipment(const TArray<FItemDefinition>& Equipment);
     FVector2D GetStatusDrawSize() const;
 
 protected:
@@ -42,6 +44,7 @@ protected:
 private:
     UPROPERTY(Transient) TWeakObjectPtr<ABattleUnitBase> SourceUnit;
     UPROPERTY(Transient) TArray<TObjectPtr<UTexture2D>> ItemIcons;
+    TArray<FText> ItemLabels;
     float Health = 0.f;
     float MaxHealth = 1.f;
     float Shield = 0.f;

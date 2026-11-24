@@ -19,6 +19,7 @@ class UUnitStatusWidget;
 class UUnitSkillBase;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FBattleUnitEvent, ABattleUnitBase*, Unit);
+DECLARE_DELEGATE_RetVal(TArray<FName>, FUnitEquipmentQuery);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FBattleUnitActionEvent, ABattleUnitBase*, Unit, int32, ActionId);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FBattleUnitDamageEvent, ABattleUnitBase*, Unit, const FUnitDamageRequest&, Request, const FUnitDamageResult&, Result);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FBattleUnitHealEvent, ABattleUnitBase*, Unit, ABattleUnitBase*, Healer, float, Amount);
@@ -96,6 +97,10 @@ public:
     UPROPERTY(BlueprintAssignable, Category="Unit|Events") FBattleUnitEvent OnManaChanged;
     UPROPERTY(BlueprintAssignable, Category="Unit|Events") FBattleUnitEvent OnShieldChanged;
     UPROPERTY(BlueprintAssignable, Category="Unit|Events") FBattleUnitEvent OnStatsChanged;
+    UPROPERTY(BlueprintAssignable, Category="Unit|Events") FBattleUnitEvent OnEquipmentChanged;
+    FUnitEquipmentQuery EquipmentQuery;
+    UFUNCTION(BlueprintPure, Category="Unit|Equipment")
+    TArray<FName> GetEquippedItems() const { return EquipmentQuery.IsBound() ? EquipmentQuery.Execute() : TArray<FName>(); }
     UPROPERTY(BlueprintAssignable, Category="Unit|Events") FBattleUnitEvent OnVisualsApplied;
     UPROPERTY(BlueprintAssignable, Category="Unit|Events") FBattleUnitEvent OnStateChanged;
     UPROPERTY(BlueprintAssignable, Category="Unit|Events") FBattleUnitEvent OnUnitDied;
@@ -110,6 +115,8 @@ public:
     UFUNCTION(BlueprintCallable, Category="Unit|Visual") void RefreshStatusWidget();
     // 초기화와 배치가 끝난 뒤 호출한다. 재생 실패/미설정은 0, 성공은 재생 시간을 반환한다.
     UFUNCTION(BlueprintCallable, Category="Unit|Visual") float PlaySpawnAnimation();
+    // StopCombat 뒤에 호출한다. 재생에 성공하면 몽타주 길이를 반환한다.
+    UFUNCTION(BlueprintCallable, Category="Unit|Visual") float PlayVictoryAnimation();
     UFUNCTION(BlueprintCallable, Category="Unit|Stats") void RecalculateStats();
     UFUNCTION(BlueprintCallable, Category="Unit|Stats") bool SetStarLevel(int32 Stars);
     UFUNCTION(BlueprintSetter) void SetTeamType(EBattleTeam Team);

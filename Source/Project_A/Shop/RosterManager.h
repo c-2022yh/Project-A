@@ -60,6 +60,9 @@ public:
 private:
     friend class AShopTransactionManager;
     friend class UBenchManager;
+    friend class UMainMapShopPlacement;
+
+    bool bUseLiveBench = false;
 
     struct FMerge
     {

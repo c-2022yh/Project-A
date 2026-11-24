@@ -6,6 +6,7 @@
 #include "../Shop/RosterManager.h"
 #include "../Shop/ShopManager.h"
 #include "../Shop/ShopTransactionManager.h"
+#include "../Shop/ItemManager.h"
 #include "../Shop/ShopOdds.h"
 #include "../Shop/Tests/TestPlacement.h"
 #include "../Shop/Tests/ShopTestGameMode.h"

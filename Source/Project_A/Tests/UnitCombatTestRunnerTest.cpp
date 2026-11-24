@@ -336,7 +336,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FUnitDeathMaterialWiringTest, "ProjectA.Unit.De
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 bool FUnitDeathMaterialWiringTest::RunTest(const FString& Parameters)
 {
-    UDataTable* Table = LoadObject<UDataTable>(nullptr, TEXT("/Game/Data/Units/DT_Units.DT_Units"));
+    UDataTable* Table = LoadObject<UDataTable>(nullptr, TEXT("/Game/Data/DT_Units.DT_Units"));
     if (!TestNotNull(TEXT("Current unit table"), Table)) return false;
     const auto CheckMaterial = [&](UMaterialInterface* Material, const FString& Label)
     {

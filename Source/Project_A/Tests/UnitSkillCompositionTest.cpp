@@ -122,7 +122,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FUnitSkillBehaviorParityTest, "ProjectA.Unit.Sk
 bool FUnitSkillBehaviorParityTest::RunTest(const FString& Parameters)
 {
     using namespace UnitSkillTests;
-    UDataTable* Table = LoadObject<UDataTable>(nullptr, TEXT("/Game/Data/Units/DT_Units.DT_Units"));
+    UDataTable* Table = LoadObject<UDataTable>(nullptr, TEXT("/Game/Data/DT_Units.DT_Units"));
     if (!TestNotNull(TEXT("DT"), Table)) return false;
     const auto Run = [this](TSubclassOf<UUnitSkillBase> Class, int32 Stars)
     {
@@ -195,7 +195,7 @@ bool FUnitSkillAssetTest::RunTest(const FString& Parameters)
 {
     using namespace UnitSkillTests;
     FFixture F;
-    UDataTable* Table = LoadObject<UDataTable>(nullptr, TEXT("/Game/Data/Units/DT_Units.DT_Units"));
+    UDataTable* Table = LoadObject<UDataTable>(nullptr, TEXT("/Game/Data/DT_Units.DT_Units"));
     if (!TestNotNull(TEXT("DT_Units"), Table)) return false;
     for (FName Name : {FName(TEXT("Knight")), FName(TEXT("Mage")), FName(TEXT("Archer")), FName(TEXT("Rogue"))})
     {

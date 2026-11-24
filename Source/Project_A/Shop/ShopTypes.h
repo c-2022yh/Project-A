@@ -25,6 +25,11 @@ struct FShopMatchState
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Shop")
     int32 DeploymentLimit = 0;
 
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Shop")
+    bool bRoundCleared = false;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Shop")
+    int32 ClearGoldAwarded = 0;
+
     bool CanTrade() const { return Phase == EShopPhase::Preparation || Phase == EShopPhase::Combat; }
     bool CanManageBoard() const { return Phase == EShopPhase::Preparation || Phase == EShopPhase::RewardSelection; }
 };
@@ -102,6 +107,11 @@ struct FItemBonuses
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Shop")
     float AttackSpeed = 0;
+    // 증가율은 0.2 = 20%. 같은 능력치의 증가율은 합산한다.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Shop") float HealthPercent = 0;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Shop") float AttackDamagePercent = 0;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Shop") float AbilityPowerPercent = 0;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Shop") float ArmorPercent = 0;
 
     void Add(const FItemBonuses& Other);
 };
@@ -116,6 +126,8 @@ struct FItemDefinition : public FTableRowBase
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Shop")
     FText Description;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Shop")
+    TObjectPtr<class UTexture2D> Icon = nullptr;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Shop")
     FItemBonuses Bonuses;
@@ -149,7 +161,7 @@ struct FRosterUnit
 UENUM(BlueprintType)
 enum class ERewardKind : uint8
 {
-    Unit, Item
+    Unit, Item, Gold
 };
 
 USTRUCT(BlueprintType)
@@ -168,6 +180,8 @@ struct FRewardOffer
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Shop", meta=(ClampMin="0"))
     float Weight = 1;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Shop", meta=(ClampMin="0"))
+    int32 GoldAmount = 0;
 };
 
 UENUM(BlueprintType)

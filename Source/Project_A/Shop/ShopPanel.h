@@ -10,6 +10,7 @@ class AShopTransactionManager;
 class AHUD;
 class UCanvas;
 class UGameViewportClient;
+struct FItemDefinition;
 struct FInputKeyEventArgs;
 
 UCLASS()
@@ -49,7 +50,10 @@ private:
     FVector2D ViewSize = FVector2D::ZeroVector;
     FGuid Selected;
     FString Feedback;
+    int32 DisplayedRewardRevision = INDEX_NONE;
     int32 ItemPage = 0;
+    FName DraggingItem;
+    FVector2D ItemDragStart = FVector2D::ZeroVector;
 
     void ClearBindings();
     void Draw(AHUD* HUD, UCanvas* Canvas);
@@ -60,4 +64,7 @@ private:
     void AddButton(AHUD& HUD, const FString& Label, const FButton& Button, bool bEnabled = true, bool bSelected = false);
     void HandleInput(const FInputKeyEventArgs& Event);
     void RunAction(const FButton& Button, AShopTransactionManager& Manager);
+    void CancelItemDrag();
+    void DrawItemIcon(AHUD& HUD, const FItemDefinition& Item, FVector2D Position, float Size);
+    void DrawItemTooltip(AHUD& HUD, const FItemDefinition& Item, FVector2D Position);
 };

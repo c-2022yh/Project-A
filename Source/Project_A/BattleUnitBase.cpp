@@ -168,9 +168,14 @@ void ABattleUnitBase::RecalculateStats()
     FinalStats.MaxHealth = Positive(FinalStats.MaxHealth) * UnitProgression::StatMultiplier(StarLevel);
     FinalStats.AttackDamage = Positive(FinalStats.AttackDamage) * UnitProgression::StatMultiplier(StarLevel);
     float SpeedBonus = OvertimeAttackSpeed, ArmorReduction = 0.f, MRReduction = 0.f, ADReduction = 0.f, APReduction = 0.f;
+    float HealthPercent = 0.f, AttackDamagePercent = 0.f, AbilityPowerPercent = 0.f, ArmorPercent = 0.f;
     AttackSlow = 0.f; DamageIncrease = 0.f; DamageRemainingRatio = 1.f; bManaBlocked = false;
     const auto Add = [&](const FUnitStatModifier& Mod)
     {
+        HealthPercent += Safe(Mod.HealthPercent);
+        AttackDamagePercent += Safe(Mod.AttackDamagePercent);
+        AbilityPowerPercent += Safe(Mod.AbilityPowerPercent);
+        ArmorPercent += Safe(Mod.ArmorPercent);
         FinalStats.MaxHealth += Safe(Mod.MaxHealth);
         FinalStats.AttackDamage += Safe(Mod.AttackDamage);
         FinalStats.AbilityPower += Safe(Mod.AbilityPower);
@@ -200,6 +205,10 @@ void ABattleUnitBase::RecalculateStats()
         PeriodicAttackDamageBonus += Entry.Value.AttackDamageBonus;
         PeriodicAbilityPowerBonus += Entry.Value.AbilityPowerBonus;
     }
+    FinalStats.MaxHealth *= FMath::Max(0.f, 1.f + HealthPercent);
+    FinalStats.AttackDamage *= FMath::Max(0.f, 1.f + AttackDamagePercent);
+    FinalStats.AbilityPower *= FMath::Max(0.f, 1.f + AbilityPowerPercent);
+    FinalStats.Armor *= FMath::Max(0.f, 1.f + ArmorPercent);
     FinalStats.MaxHealth = FMath::Max(1.f, Safe(FinalStats.MaxHealth, 1.f));
     FinalStats.AttackDamage = Positive(FinalStats.AttackDamage) * (1.f - ADReduction) * (1.f + PeriodicAttackDamageBonus);
     AbilityPowerBeforePeriodicBonuses = Positive(FinalStats.AbilityPower) * (1.f - APReduction);
@@ -437,6 +446,17 @@ float ABattleUnitBase::PlaySpawnAnimation()
     if (UAnimInstance* Anim = Body->GetAnimInstance())
         return Anim->Montage_Play(Definition.Animations.SpawnMontage);
     return 0.f;
+}
+
+float ABattleUnitBase::PlayVictoryAnimation()
+{
+    UAnimMontage* Montage = Definition.Animations.VictoryMontage;
+    if (!IsAlive() || bInCombat || ActionState != EUnitActionState::Idle || !Montage) return 0.f;
+
+    UAnimInstance* Anim = Body->GetAnimInstance();
+    if (!Anim || Anim->Montage_IsActive(Montage)) return 0.f;
+
+    return Anim->Montage_Play(Montage);
 }
 
 bool ABattleUnitBase::IsAlive() const { return bInitialized && !bIsDead && CurrentHP > 0.f; }

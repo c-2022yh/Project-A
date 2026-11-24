@@ -66,6 +66,7 @@ int32 UFlowBuildCommandlet::Main(const FString& Params){
  if(Params.Contains(TEXT("Verify")))return VerifyFlow();
  if(Params.Contains(TEXT("Extend")))return ExtendFlow();
  const FString Root=TEXT("/Game/BluePrints/GameFlow/");
+ if(FPackageName::DoesPackageExist(TEXT("/Game/Data/DT_Rounds"))){UE_LOG(LogTemp,Error,TEXT("Refusing overwrite: /Game/Data/DT_Rounds")); return 2;}
  for(const TCHAR* N:{TEXT("E_GamePhase"),TEXT("ST_RoundDefinition"),TEXT("DT_Rounds"),TEXT("BP_RoundManager")}){
   if(FPackageName::DoesPackageExist(Root+N)){UE_LOG(LogTemp,Error,TEXT("Refusing overwrite: %s"),N); return 2;}
  }
@@ -83,7 +84,7 @@ int32 UFlowBuildCommandlet::Main(const FString& Params){
  }
  for(auto G:Old)FStructureEditorUtils::RemoveVariable(S,G);
  FStructureEditorUtils::CompileStructure(S);
- auto D=NewObject<UDataTable>(CreatePackage(*(Root+TEXT("DT_Rounds"))),TEXT("DT_Rounds"),RF_Public|RF_Standalone); D->RowStruct=S;
+ auto D=NewObject<UDataTable>(CreatePackage(TEXT("/Game/Data/DT_Rounds")),TEXT("DT_Rounds"),RF_Public|RF_Standalone); D->RowStruct=S;
  FString CSV=TEXT("Name,RoundNumber,MaxDeployedUnits,CombatDurationSeconds\n");
  for(int I=1;I<=5;++I)CSV+=FString::Printf(TEXT("R%d,%d,%d,60\n"),I,I,I+1);
  auto Errors=D->CreateTableFromCSVString(CSV); if(!Errors.IsEmpty()){for(auto& Err:Errors)UE_LOG(LogTemp,Error,TEXT("%s"),*Err);return 5;}

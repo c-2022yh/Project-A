@@ -22,7 +22,7 @@ for root in ['/Game/BluePrints', '/Game/Data/Units', '/Game/Main', '/Game/TestMa
         asset = unreal.load_asset(path)
         assert asset, 'Asset failed to load: ' + path
         report['assets'].append({'path': path, 'class': asset.get_class().get_name()})
-table = unreal.load_asset('/Game/Data/Units/DT_Units')
+table = unreal.load_asset('/Game/Data/DT_Units')
 report['unit_rows'] = [str(name) for name in unreal.DataTableFunctionLibrary.get_data_table_row_names(table)]
 output = Path(unreal.Paths.project_saved_dir()) / 'TeamIntegrationAssetReport.json'
 output.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')

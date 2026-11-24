@@ -88,6 +88,7 @@ struct PROJECT_A_API FUnitAnimationDefinition
     UPROPERTY(EditAnywhere, BlueprintReadOnly) TObjectPtr<UAnimMontage> AttackMontage = nullptr;
     UPROPERTY(EditAnywhere, BlueprintReadOnly) TObjectPtr<UAnimMontage> DeathMontage = nullptr;
     UPROPERTY(EditAnywhere, BlueprintReadOnly) TObjectPtr<UAnimMontage> SpawnMontage = nullptr;
+    UPROPERTY(EditAnywhere, BlueprintReadOnly) TObjectPtr<UAnimMontage> VictoryMontage = nullptr;
 };
 
 // 평타와 스킬이 같은 외형 규격을 사용한다. 메시가 비어 있으면 화면에는 표시하지 않는다.
@@ -170,6 +171,10 @@ USTRUCT(BlueprintType)
 struct PROJECT_A_API FUnitStatModifier
 {
     GENERATED_BODY()
+    UPROPERTY(EditAnywhere, BlueprintReadWrite) float HealthPercent = 0.f;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite) float AttackDamagePercent = 0.f;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite) float AbilityPowerPercent = 0.f;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite) float ArmorPercent = 0.f;
     UPROPERTY(EditAnywhere, BlueprintReadWrite) float MaxHealth = 0.f;
     UPROPERTY(EditAnywhere, BlueprintReadWrite) float AttackDamage = 0.f;
     UPROPERTY(EditAnywhere, BlueprintReadWrite) float AbilityPower = 0.f;

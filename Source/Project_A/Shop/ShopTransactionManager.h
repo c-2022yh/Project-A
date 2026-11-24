@@ -64,6 +64,7 @@ public:
 
     UFUNCTION(BlueprintPure, Category="Transactions")
     bool IsConfigured() const;
+    bool ReturnEquipmentFromBench(FGuid UnitId);
 
     UFUNCTION(BlueprintPure, Category="Transactions")
     FShopMatchState GetMatchState() const;

@@ -82,7 +82,7 @@ static bool RepairControllerPreview(UBlueprint* BP)
             UK2Node_CallFunction* Init = NewObject<UK2Node_CallFunction>(Graph, MakeUniqueObjectName(Graph, UK2Node_CallFunction::StaticClass(), TEXT("TeamInitializeUnit")));
             Graph->AddNode(Init); Init->CreateNewGuid(); Init->SetFromFunction(Function); Init->AllocateDefaultPins();
             Init->NodePosX = Spawn->NodePosX + 300; Init->NodePosY = Spawn->NodePosY + 250;
-            Init->FindPinChecked(TEXT("Data"))->DefaultValue = TEXT("(DataTable=\"/Script/Engine.DataTable'/Game/Data/Units/DT_Units.DT_Units'\",RowName=\"Knight\")");
+            Init->FindPinChecked(TEXT("Data"))->DefaultValue = TEXT("(DataTable=\"/Script/Engine.DataTable'/Game/Data/DT_Units.DT_Units'\",RowName=\"Knight\")");
             Init->FindPinChecked(TEXT("Stars"))->DefaultValue = TEXT("1");
             UEdGraphPin* Team = TeamSetter->FindPinChecked(TEXT("TeamType"));
             Init->FindPinChecked(TEXT("Team"))->DefaultValue = Team->DefaultValue;
@@ -116,7 +116,7 @@ int32 UTeamIntegrationCommandlet::Main(const FString& Params)
 {
     // DT 기본값을 컴파일 중 처음 읽으면 AnimBP 로딩이 중첩될 수 있으므로 먼저 로드한다.
     if (!LoadObject<UObject>(nullptr, TEXT("/Game/BluePrints/Units/Animation/ABP_Unit.ABP_Unit"))
-        || !LoadObject<UObject>(nullptr, TEXT("/Game/Data/Units/DT_Units.DT_Units"))) return 1;
+        || !LoadObject<UObject>(nullptr, TEXT("/Game/Data/DT_Units.DT_Units"))) return 1;
     UBlueprint* BP = LoadObject<UBlueprint>(nullptr, TEXT("/Game/ControlerTestMap/BP_ControlerTestGameMode.BP_ControlerTestGameMode"));
     if (!BP) return 1;
     if (Params.Contains(TEXT("Repair")) && !RepairControllerPreview(BP)) return 2;

@@ -147,10 +147,10 @@ bool AShopManager::GenerateRewards(TArray<FRewardOffer>& NewRewards, TFunctionRe
     TArray<double> Weights;
     for (const FRewardOffer& Reward : RewardPool)
     {
-        if (ValidWeight(Reward.Weight) <= 0 || Reward.DefinitionId.IsNone()) continue;
+        if (ValidWeight(Reward.Weight) <= 0 || (Reward.Kind != ERewardKind::Gold && Reward.DefinitionId.IsNone())) continue;
         const bool bValid = Reward.Kind == ERewardKind::Unit
             ? Reward.Stars >= 1 && Reward.Stars <= 2 && !GetOfferDefinition(Reward.DefinitionId).UnitId.IsNone()
-            : IsItemValid(Reward.DefinitionId);
+            : Reward.Kind == ERewardKind::Gold ? Reward.GoldAmount > 0 : IsItemValid(Reward.DefinitionId);
         if (!bValid) continue;
         Candidates.Add(Reward);
         Weights.Add(Reward.Weight);

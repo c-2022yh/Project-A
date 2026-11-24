@@ -1,6 +1,6 @@
 # DT_Units 항목과 정리 기준
 
-`/Game/Data/Units/DT_Units`는 구매/배치할 기물의 공통 설정이다.
+`/Game/Data/DT_Units`는 구매/배치할 기물의 공통 설정이다.
 특수한 전투 특징은 `Skill Classes`로 연결하고, 그 기능의 수치는 스킬 BP에서 설정한다.
 적 몬스터 DT는 이번 작업에서 만들지 않았다.
 

@@ -14,7 +14,11 @@
 #include "Widgets/SOverlay.h"
 #include "Widgets/Layout/SBorder.h"
 #include "Widgets/Text/STextBlock.h"
+#include "Widgets/Input/SButton.h"
+#include "Widgets/SBoxPanel.h"
 #include "Styling/CoreStyle.h"
+#include "Shop/ShopTransactionManager.h"
+#include "UnifiedRoundManager.h"
 
 AAutoBattleGameMode::AAutoBattleGameMode()
 {
@@ -22,6 +26,10 @@ AAutoBattleGameMode::AAutoBattleGameMode()
     PlayerControllerClass = AAutoBattlePlayerController::StaticClass();
     HUDClass = AAutoBattleHUD::StaticClass();
     DefaultPawnClass = nullptr;
+    MainMapUnitClass = TSoftClassPtr<ABattleUnitBase>(
+        FSoftObjectPath(TEXT("/Game/BluePrints/Units/UnitBase/BP_UnitBase.BP_UnitBase_C")));
+    MainMapUnitDefinitions = TSoftObjectPtr<UDataTable>(
+        FSoftObjectPath(TEXT("/Game/Data/DT_Units.DT_Units")));
 }
 void AAutoBattleGameMode::BeginPlay()
 {
@@ -41,6 +49,13 @@ void AAutoBattleGameMode::ChangePhase(EGamePhase Phase)
 }
 void AAutoBattleGameMode::ClearEncounter()
 {
+    GetWorldTimerManager().ClearTimer(RoundClearTimer);
+    if (bShowingRoundClear)
+    {
+        bShowingRoundClear = false;
+        if (RoundClearBanner.IsValid()) RoundClearBanner->SetVisibility(EVisibility::Collapsed);
+        SetBattleHUDHiddenForResult(false);
+    }
     bEncounterReady = false;
     bEncounterSetupOpen = false;
     bPreparationActive = false;
@@ -71,6 +86,14 @@ void AAutoBattleGameMode::InitializeEncounter()
     if (PlayerTiles.IsEmpty() || BoardManager->GetEnemyTiles().IsEmpty())
     {
         StatusMessage = TEXT("Setup: generate both player and enemy tile areas.");
+        return;
+    }
+
+    if (bEnableMainMapRoundTest && (bUseRoundEnemyFormations || !RoundsTable.IsNull()))
+    {
+        // 메인맵의 라운드 편성은 테스트 UnitRoster를 생성하는 Board Ready 그래프를 거치지 않는다.
+        bEncounterReady = true;
+        StartPreparationPhase();
         return;
     }
 
@@ -215,6 +238,8 @@ void AAutoBattleGameMode::StartPreparationPhase()
         if (IsValid(Unit)) Unit->PrepareSkillsForRound();
     RestartPreparationCountdown();
     StatusMessage = TEXT("Select an ally, then click an empty player tile. Enter: start. Right click: cancel.");
+    if (bEnableMainMapRoundTest && (bUseRoundEnemyFormations || !RoundsTable.IsNull()) && !bManagedBridgeReady)
+        bPreparationActive = false;
     ChangePhase(EGamePhase::Preparation);
     if (bEnableMainMapRoundTest && !bManagedBridgeReady) InitializeManagedRoundBridge();
 }
@@ -240,7 +265,12 @@ void AAutoBattleGameMode::RequestCombatStart()
 }
 void AAutoBattleGameMode::RequestBattleRestart()
 {
-    if (bEnableMainMapRoundTest) return;
+    if (bEnableMainMapRoundTest)
+    {
+        if ((bManagedDefeated || bManagedTestFinished) && !bShowingRoundClear)
+            UGameplayStatics::OpenLevel(this, FName(*UGameplayStatics::GetCurrentLevelName(this, true)));
+        return;
+    }
     ReceiveRestartRequested();
 }
 void AAutoBattleGameMode::ReportBattleResult(EGamePhase Result)
@@ -423,19 +453,29 @@ int32 AAutoBattleGameMode::GetManagedRoundPhase() const
 
 bool AAutoBattleGameMode::InitializeManagedRoundBridge()
 {
-    if (!bEnableMainMapRoundTest || !bEncounterReady || BattleUnits.IsEmpty()) return false;
+    if (!bEnableMainMapRoundTest || !bEncounterReady) return false;
     if (bManagedBridgeReady) return true;
     const FObjectPropertyBase* Ref = FindFProperty<FObjectPropertyBase>(GetClass(), TEXT("RoundManagerReference"));
-    ManagedRoundManager = Ref ? Cast<AActor>(Ref->GetObjectPropertyValue_InContainer(this)) : nullptr;
+    if (!RoundsTable.IsNull())
+    {
+        auto* Manager = GetWorld()->SpawnActor<AUnifiedRoundManager>();
+        if (!Manager) return false;
+        Manager->RoundsTable = RoundsTable.LoadSynchronous();
+        ManagedRoundManager = Manager;
+    }
+    else
+        ManagedRoundManager = Ref ? Cast<AActor>(Ref->GetObjectPropertyValue_InContainer(this)) : nullptr;
     if (!IsValid(ManagedRoundManager))
     {
         auto Class=LoadClass<AActor>(nullptr,TEXT("/Game/BluePrints/GameFlow/BP_RoundManager.BP_RoundManager_C"));
         if(!Class)return false;
         for(TActorIterator<AActor> It(GetWorld(),Class);It;++It){if(ManagedRoundManager){ManagedError(TEXT("Duplicate RoundManagers"));return false;}ManagedRoundManager=*It;}
         if(!ManagedRoundManager)ManagedRoundManager=GetWorld()->SpawnActor<AActor>(Class);
+        if (Ref && IsValid(ManagedRoundManager) && ManagedRoundManager->IsA(Ref->PropertyClass))
+            Ref->SetObjectPropertyValue_InContainer(this, ManagedRoundManager);
     }
     if(!ParticipantRecords()){ManagedError(TEXT("RoundManager participant array missing"));return false;}
-    for (FName Name : {FName(TEXT("ConfigureIntegration")), FName(TEXT("InitializeFlow")), FName(TEXT("ConfigureTemporaryRewardBypass")), FName(TEXT("UpdateInteractionState")), FName(TEXT("NotifyDeploymentLimitApplied")), FName(TEXT("NotifyRoundPreparationCompleted")), FName(TEXT("RequestCombatStart")), FName(TEXT("NotifyCombatFinished")), FName(TEXT("NotifyCombatResolutionCompleted")), FName(TEXT("ConfirmProgressionToReward")), FName(TEXT("ResolveFinalRoundPolicy"))})
+    for (FName Name : {FName(TEXT("ConfigureIntegration")), FName(TEXT("InitializeFlow")), FName(TEXT("ConfigureTemporaryRewardBypass")), FName(TEXT("UpdateInteractionState")), FName(TEXT("NotifyDeploymentLimitApplied")), FName(TEXT("NotifyRoundPreparationCompleted")), FName(TEXT("RequestCombatStart")), FName(TEXT("NotifyCombatFinished")), FName(TEXT("NotifyCombatResolutionCompleted")), FName(TEXT("ConfirmProgressionToReward")), FName(TEXT("ResolveFinalRoundPolicy")), FName(TEXT("NotifyRewardSelectionCompleted"))})
         if (!ManagedRoundManager->FindFunction(Name)) { ManagedError(TEXT("Required Blueprint API missing: ") + Name.ToString()); return false; }
     const TPair<FName, FName> Bindings[] = {
         {TEXT("OnDeploymentLimitChangeRequested"), TEXT("ManagedDeploymentRequested")},
@@ -444,20 +484,22 @@ bool AAutoBattleGameMode::InitializeManagedRoundBridge()
         {TEXT("OnCombatStopRequested"), TEXT("ManagedCombatStopRequested")},
         {TEXT("OnCombatResolutionRequired"), TEXT("ManagedResolutionRequested")},
         {TEXT("OnFinalRoundPolicyRequired"), TEXT("ManagedFinalPolicyRequested")},
+        {TEXT("OnRewardRequested"), TEXT("ManagedRewardRequested")},
         {TEXT("OnPhaseChanged"), TEXT("ManagedPhaseChanged")},
         {TEXT("OnStartAvailabilityChanged"), TEXT("ManagedAvailabilityChanged")},
         {TEXT("OnConfigurationError"), TEXT("ManagedConfigurationError")}
     };
     for (const auto& Binding : Bindings) if (!BindManagedEvent(Binding.Key, Binding.Value)) { ManagedError(TEXT("Unable to bind ") + Binding.Key.ToString()); return false; }
+    if (!InitializeMainMapShop()) { ManagedError(TEXT("MainMap shop setup failed")); return false; }
     bManagedBridgeReady = true;
     MaxRound = 5;
-    CallManaged(TEXT("ConfigureTemporaryRewardBypass"), [](UFunction* F, uint8* P) { ManagedRoundBridge::Bool(F, P, TEXT("bEnabled"), true); });
+    CallManaged(TEXT("ConfigureTemporaryRewardBypass"), [](UFunction* F, uint8* P) { ManagedRoundBridge::Bool(F, P, TEXT("bEnabled"), false); });
     CallManaged(TEXT("ConfigureIntegration"), [](UFunction* F, uint8* P) {
         for (FName Name : {FName(TEXT("TimerOwnershipConfirmed")), FName(TEXT("PhaseSyncConfirmed")), FName(TEXT("DeploymentAdapterReady")), FName(TEXT("CombatAdapterReady")), FName(TEXT("PreparationAdapterReady")), FName(TEXT("RewardAdapterReady"))}) ManagedRoundBridge::Bool(F, P, Name, true);
     });
     RefreshManagedInteraction(true);
     CallManaged(TEXT("InitializeFlow"));
-    UE_LOG(LogTemp, Display, TEXT("MANAGED_MAINMAP_READY: units=%d timerOwner=RoundManager rewardBypass=test-only"), BattleUnits.Num());
+    UE_LOG(LogTemp, Display, TEXT("MANAGED_MAINMAP_READY: units=%d timerOwner=RoundManager reward=shop"), BattleUnits.Num());
     return bManagedBridgeReady;
 }
 
@@ -484,7 +526,9 @@ void AAutoBattleGameMode::RefreshManagedInteraction(bool bForce)
 
 void AAutoBattleGameMode::ManagedDeploymentRequested(int32 Limit, int32 LimitRoundNumber, FGuid RequestId)
 {
-    const bool Valid = ManagedRequestMatches(TEXT("bAwaitingDeployment"),TEXT("DeploymentRequestId"),RequestId) && LimitRoundNumber >= 1 && LimitRoundNumber <= 5 && Limit == LimitRoundNumber + 1;
+    const auto* Row = GetUnifiedRound(LimitRoundNumber);
+    const int32 ExpectedLimit = Row ? Row->MaxDeployedUnits : LimitRoundNumber + 1;
+    const bool Valid = ManagedRequestMatches(TEXT("bAwaitingDeployment"),TEXT("DeploymentRequestId"),RequestId) && LimitRoundNumber >= 1 && LimitRoundNumber <= 5 && Limit == ExpectedLimit;
     if (Valid) MaxBoardUnits = Limit;
     UE_LOG(LogTemp, Display, TEXT("MANAGED_LIMIT: round=%d limit=%d applied=%d"), LimitRoundNumber, Limit, Valid);
     CallManaged(TEXT("NotifyDeploymentLimitApplied"), [RequestId, Valid](UFunction* F, uint8* P) {
@@ -555,13 +599,23 @@ bool AAutoBattleGameMode::RestoreManagedUnits()
 }
 void AAutoBattleGameMode::ManagedPreparationRequested(int32 Round, FGuid RequestId)
 {
-    bool Valid = ManagedRequestMatches(TEXT("bAwaitingPreparation"),TEXT("PreparationRequestId"),RequestId) && Round >= 1 && Round <= 5 && (Round == 1 || Round == CurrentRound + 1) && MaxBoardUnits == Round + 1;
+    const auto* Row = GetUnifiedRound(Round);
+    const int32 ExpectedLimit = Row ? Row->MaxDeployedUnits : Round + 1;
+    bool Valid = ManagedRequestMatches(TEXT("bAwaitingPreparation"),TEXT("PreparationRequestId"),RequestId) && Round >= 1 && Round <= 5 && (Round == 1 || Round == CurrentRound + 1) && MaxBoardUnits == ExpectedLimit;
     if (Valid && Round > 1) Valid = RestoreManagedUnits();
+    if (Valid && (bUseRoundEnemyFormations || !RoundsTable.IsNull()))
+    {
+        FString Error;
+        Valid = PrepareManagedEnemies(Round, Error);
+        if (!Valid) ManagedError(FString::Printf(TEXT("Round %d enemy formation: %s"), Round, *Error));
+    }
     if (Valid)
     {
         CurrentRound = Round; ElapsedCombatTime = 0; RemainingPreparationTime = 0;
         bBattleResultPending = false; bPreparationActive = true; bPreparationExpiryReported = false; bEncounterReady = true;
         ChangePhase(EGamePhase::Preparation); LastManagedDeployedCount = -1; RefreshManagedInteraction(true);
+        Valid = IsValid(MainMapShop) && MainMapShop->EnterPreparation();
+        if (!Valid) ManagedError(TEXT("Shop could not enter preparation"));
     }
     UE_LOG(LogTemp, Display, TEXT("MANAGED_PREPARATION: round=%d ready=%d units=%d"), Round, Valid, BattleUnits.Num());
     CallManaged(TEXT("NotifyRoundPreparationCompleted"), [RequestId, Valid](UFunction* F, uint8* P) {
@@ -581,15 +635,71 @@ void AAutoBattleGameMode::ManagedCombatStartRequested(FGuid Encounter, int32 Rou
 void AAutoBattleGameMode::ManagedCombatStopRequested(FGuid Encounter, bool TimedOut)
 {
     if (!bManagedBridgeReady || Encounter != ManagedEncounterId) return;
+    bBattleResultPending = true;
     for (ABattleUnitBase* Unit : BattleUnits) if (IsValid(Unit)) Unit->StopCombat();
     if (TimedOut) ManagedLastOutcome = TEXT("TimedOut");
-    bBattleResultPending = true; ChangePhase(EGamePhase::RoundClear);
-    if(BoardManager->HasSavedPlayerFormation() || !BoardManager->LastFormationFailureReason.IsEmpty()) ManagedError(TEXT("Existing formation restoration failed"));
 }
 void AAutoBattleGameMode::ManagedResolutionRequested(FGuid Encounter, bool TimedOut)
 {
-    if (!bManagedBridgeReady || Encounter != ManagedEncounterId || GetManagedRoundPhase() != 3) return;
+    if (!bManagedBridgeReady || Encounter != ManagedEncounterId || GetManagedRoundPhase() != 3
+        || !bBattleResultPending || bShowingRoundClear || bManagedDefeated) return;
+    // 패배와 시간 초과는 보상 진행을 중단하고 같은 길이의 결과 연출을 보여준다.
+    bManagedDefeated = TimedOut || ManagedLastOutcome != TEXT("Victory");
+    if (RoundClearDisplaySeconds <= 0.f)
+    {
+        FinishManagedCombatResolution(Encounter, TimedOut);
+        return;
+    }
+
+    // RoundClear로 바뀌면 보드가 배치를 복원하므로, 연출 동안은 전투 종료 대기 상태를 유지한다.
+    bShowingRoundClear = true;
+    if (AAutoBattlePlayerController* PC = Cast<AAutoBattlePlayerController>(UGameplayStatics::GetPlayerController(this, 0)))
+        PC->ClearSelection();
+    SetBattleHUDHiddenForResult(true);
+    RefreshRoundDisplay();
+
+    const TArray<FIntegrationRoundParticipant>* Records = ParticipantRecords();
+    if (!bManagedDefeated && Records)
+    {
+        for (const FIntegrationRoundParticipant& Record : *Records)
+        {
+            ABattleUnitBase* Unit = Record.Unit;
+            if (Record.EncounterId == Encounter && Record.Team == EBattleTeam::Player && IsValid(Unit) && Unit->IsAlive())
+                Unit->PlayVictoryAnimation();
+        }
+    }
+    UE_LOG(LogTemp, Display, TEXT("ROUND_CLEAR_PRESENTATION: round=%d duration=%.2f"), CurrentRound, RoundClearDisplaySeconds);
+    GetWorldTimerManager().SetTimer(RoundClearTimer,
+        FTimerDelegate::CreateUObject(this, &AAutoBattleGameMode::FinishManagedCombatResolution, Encounter, TimedOut),
+        RoundClearDisplaySeconds, false);
+}
+
+void AAutoBattleGameMode::FinishManagedCombatResolution(FGuid Encounter, bool TimedOut)
+{
+    if (!bManagedBridgeReady || Encounter != ManagedEncounterId || GetManagedRoundPhase() != 3 || !bBattleResultPending) return;
+
+    bShowingRoundClear = false;
+    if (bManagedDefeated)
+    {
+        GetWorldTimerManager().ClearAllTimersForObject(ManagedRoundManager);
+        bBattleResultPending = false;
+        bPreparationActive = false;
+        StatusMessage = TEXT("Defeat. Restart to return to round one.");
+        // 전장 모습을 유지한 채 종료한다. 보상/다음 라운드 완료 응답은 보내지 않는다.
+        CurrentPhase = EGamePhase::GameOver;
+        RefreshRoundDisplay();
+        UE_LOG(LogTemp, Display, TEXT("MANAGED_DEFEAT: round=%d progressionStopped=1 restartReady=1"), CurrentRound);
+        return;
+    }
+    if (RoundClearBanner.IsValid()) RoundClearBanner->SetVisibility(EVisibility::Collapsed);
+    ChangePhase(EGamePhase::RoundClear);
+    if (BoardManager->HasSavedPlayerFormation() || !BoardManager->LastFormationFailureReason.IsEmpty())
+    {
+        ManagedError(TEXT("Existing formation restoration failed"));
+        return;
+    }
     UE_LOG(LogTemp, Display, TEXT("MANAGED_SETTLEMENT: round=%d outcome=%s timedOut=%d testAdvanceRegardless=1"), CurrentRound, *ManagedLastOutcome, TimedOut);
+    if (!GrantManagedClearGold()) return;
     CallManaged(TEXT("NotifyCombatResolutionCompleted"), [Encounter](UFunction* F, uint8* P) { ManagedRoundBridge::Guid(F, P, TEXT("CompletedEncounterId"), Encounter); });
     CallManaged(TEXT("ConfirmProgressionToReward"), [Encounter](UFunction* F, uint8* P) { ManagedRoundBridge::Guid(F, P, TEXT("CompletedEncounterId"), Encounter); });
 }
@@ -597,9 +707,20 @@ void AAutoBattleGameMode::ManagedFinalPolicyRequested(FGuid Encounter)
 {
     if (!bManagedBridgeReady || Encounter != ManagedEncounterId || CurrentRound != 5) return;
     if(!RestoreManagedUnits()){ManagedError(TEXT("Final participant reset failed; progression blocked"));return;}
-    // Keep the final Reward stage; the explicitly enabled temporary adapter skips it.
+    // 최종 보상을 수령한 뒤 라운드 매니저가 Finished로 넘어간다.
     CallManaged(TEXT("ResolveFinalRoundPolicy"), [Encounter](UFunction* F, uint8* P) {
         ManagedRoundBridge::Guid(F, P, TEXT("CompletedEncounterId"), Encounter); ManagedRoundBridge::Bool(F, P, TEXT("bGrantFinalReward"), true);
+    });
+}
+void AAutoBattleGameMode::ManagedRewardReceived()
+{
+    const FGuid RequestId = PendingShopRewardId;
+    if (GetManagedRoundPhase() != 4 || !ManagedRequestMatches(TEXT("bAwaitingReward"), TEXT("RewardRequestId"), RequestId)) return;
+    PendingShopRewardId.Invalidate();
+    SetBattleHUDHiddenForResult(false);
+    CallManaged(TEXT("NotifyRewardSelectionCompleted"), [RequestId](UFunction* F, uint8* P)
+    {
+        ManagedRoundBridge::Guid(F, P, TEXT("CompletedRewardRequestId"), RequestId);
     });
 }
 void AAutoBattleGameMode::ManagedPhaseChanged(uint8 Previous, uint8 Current)
@@ -610,10 +731,14 @@ void AAutoBattleGameMode::ManagedPhaseChanged(uint8 Previous, uint8 Current)
     if (Current == 5)
     {
         if(!RestoreManagedUnits()){ManagedError(TEXT("Final reset failed"));return;}
-        bManagedTestFinished = true; ChangePhase(EGamePhase::RoundClear); bEncounterReady = false; bPreparationActive = false;
-        StatusMessage = TEXT("TEST Finished: five rounds completed. This is not a victory/defeat policy.");
+        bManagedTestFinished = true;
+        bEncounterReady = false;
+        bPreparationActive = false;
+        StatusMessage = TEXT("All rounds cleared!");
+        ChangePhase(EGamePhase::Victory);
+        SetBattleHUDHiddenForResult(true);
+        RefreshRoundDisplay();
         UE_LOG(LogTemp, Display, TEXT("MANAGED_FINISHED: rounds=%d sameUnits=%d noR6=1"), CurrentRound, BattleUnits.Num());
-        if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 3600.f, FColor::Green, TEXT("MAINMAP TEST: R5 Finished - 5 rounds completed"));
     }
 }
 void AAutoBattleGameMode::ManagedAvailabilityChanged(bool Allowed, FText Message)
@@ -623,6 +748,8 @@ void AAutoBattleGameMode::ManagedAvailabilityChanged(bool Allowed, FText Message
 void AAutoBattleGameMode::ManagedConfigurationError(FText Message) { ManagedError(Message.ToString()); }
 void AAutoBattleGameMode::EndPlay(const EEndPlayReason::Type Reason)
 {
+    GetWorldTimerManager().ClearTimer(RoundClearTimer);
+    SetBattleHUDHiddenForResult(false);
     RemoveRoundDisplay();
     if (bEnableMainMapRoundTest && IsValid(ManagedRoundManager))
     {
@@ -653,7 +780,7 @@ void AAutoBattleGameMode::RefreshRoundDisplay()
     if (!RoundDisplayRoot.IsValid())
     {
         RoundDisplayRoot = SNew(SOverlay)
-            .Visibility(EVisibility::HitTestInvisible)
+            .Visibility(EVisibility::SelfHitTestInvisible)
             + SOverlay::Slot().HAlign(HAlign_Right).VAlign(VAlign_Top).Padding(FMargin(0.f, 80.f, 24.f, 0.f))
             [
                 SNew(SBorder)
@@ -667,6 +794,34 @@ void AAutoBattleGameMode::RefreshRoundDisplay()
                     .ShadowOffset(FVector2D(1.f, 1.f))
                     .ShadowColorAndOpacity(FLinearColor::Black)
                 ]
+            ]
+            + SOverlay::Slot().HAlign(HAlign_Center).VAlign(VAlign_Center)
+            [
+                SAssignNew(RoundClearBanner, SBorder)
+                .Visibility(EVisibility::Collapsed)
+                .BorderImage(FCoreStyle::Get().GetBrush("WhiteBrush"))
+                .BorderBackgroundColor(FLinearColor(0.015f, 0.02f, 0.04f, 0.9f))
+                .Padding(FMargin(28.f, 12.f))
+                [
+                    SNew(SVerticalBox)
+                    + SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Center)
+                    [
+                        SAssignNew(RoundClearLabel, STextBlock)
+                        .Font(FCoreStyle::GetDefaultFontStyle("Bold", 28))
+                        .ColorAndOpacity(FLinearColor(1.f, 0.84f, 0.48f))
+                    ]
+                    + SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Center).Padding(0.f, 16.f, 0.f, 0.f)
+                    [
+                        SAssignNew(DefeatRestartButton, SButton)
+                        .Visibility(EVisibility::Collapsed)
+                        .Text(NSLOCTEXT("AutoBattleHUD", "Restart", "다시하기"))
+                        .OnClicked_Lambda([WeakThis = TWeakObjectPtr<AAutoBattleGameMode>(this)]()
+                        {
+                            if (AAutoBattleGameMode* Mode = WeakThis.Get()) Mode->RequestBattleRestart();
+                            return FReply::Handled();
+                        })
+                    ]
+                ]
             ];
         RoundDisplayViewport = Viewport;
         Viewport->AddViewportWidgetContent(RoundDisplayRoot.ToSharedRef(), 100);
@@ -675,6 +830,25 @@ void AAutoBattleGameMode::RefreshRoundDisplay()
     const FText Text = FText::FromString(FString::Printf(TEXT("Round %d / 5%s"), Round,
         Phase == 5 ? TEXT(" - Finished") : TEXT("")));
     RoundDisplayLabel->SetText(Text);
+    if (bManagedTestFinished)
+    {
+        RoundClearLabel->SetText(NSLOCTEXT("AutoBattleHUD", "AllRoundsCleared", "전체 라운드 클리어!"));
+        RoundClearLabel->SetColorAndOpacity(FLinearColor(1.f, 0.84f, 0.48f));
+        RoundClearBanner->SetVisibility(EVisibility::SelfHitTestInvisible);
+        DefeatRestartButton->SetVisibility(EVisibility::Visible);
+    }
+    else if (bManagedDefeated)
+    {
+        RoundClearLabel->SetText(FText::Format(NSLOCTEXT("AutoBattleHUD", "RoundDefeat", "{0}라운드 패배"), Round));
+        RoundClearLabel->SetColorAndOpacity(FLinearColor(1.f, 0.35f, 0.3f));
+        RoundClearBanner->SetVisibility(EVisibility::SelfHitTestInvisible);
+        DefeatRestartButton->SetVisibility(bShowingRoundClear ? EVisibility::Collapsed : EVisibility::Visible);
+    }
+    else if (bShowingRoundClear)
+    {
+        RoundClearLabel->SetText(FText::Format(NSLOCTEXT("AutoBattleHUD", "RoundClear", "{0}라운드 클리어!"), Round));
+        RoundClearBanner->SetVisibility(EVisibility::HitTestInvisible);
+    }
     UE_LOG(LogTemp, Display, TEXT("ROUND_DISPLAY_UPDATED: managerRound=%d phase=%d text=%s"), Round, Phase, *Text.ToString());
 }
 
@@ -683,6 +857,9 @@ void AAutoBattleGameMode::RemoveRoundDisplay()
     if (RoundDisplayRoot.IsValid())
         if (UGameViewportClient* Viewport = RoundDisplayViewport.Get()) Viewport->RemoveViewportWidgetContent(RoundDisplayRoot.ToSharedRef());
     RoundDisplayLabel.Reset();
+    RoundClearLabel.Reset();
+    DefeatRestartButton.Reset();
+    RoundClearBanner.Reset();
     RoundDisplayRoot.Reset();
     RoundDisplayViewport.Reset();
 }

@@ -1,14 +1,61 @@
 #pragma once
 #include "CoreMinimal.h"
+#include "Engine/DataTable.h"
 #include "GameFramework/GameModeBase.h"
 #include "BattleUnitBase.h"
+#include "Shop/ShopMatchProgress.h"
 #include "AutoBattleGameMode.generated.h"
 
 class SWidget;
 class STextBlock;
 class UGameViewportClient;
+class UDataTable;
 class ABoardManager;
 class ABoardTile;
+class AShopTransactionManager;
+class UMainMapShopPlacement;
+class UUserWidget;
+enum class ESlateVisibility : uint8;
+
+USTRUCT(BlueprintType)
+struct PROJECT_A_API FRoundEnemySpawn
+{
+    GENERATED_BODY()
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite) FName UnitRow;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, meta=(ClampMin="1", ClampMax="2")) int32 Stars = 1;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, meta=(ClampMin="0")) int32 Row = 0;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, meta=(ClampMin="0")) int32 Column = 0;
+};
+
+USTRUCT(BlueprintType)
+struct PROJECT_A_API FRoundEnemyFormation : public FTableRowBase
+{
+    GENERATED_BODY()
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite) TArray<FRoundEnemySpawn> Enemies;
+};
+
+USTRUCT(BlueprintType)
+struct PROJECT_A_API FRoundClearReward : public FTableRowBase
+{
+    GENERATED_BODY()
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, meta=(ClampMin="0"))
+    int32 ClearGold = 0;
+};
+
+USTRUCT(BlueprintType)
+struct PROJECT_A_API FAutoBattleRoundDefinition : public FTableRowBase
+{
+    GENERATED_BODY()
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, meta=(ClampMin="1")) int32 MaxDeployedUnits = 2;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, meta=(ClampMin="0.1")) float CombatDurationSeconds = 60.f;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite) TArray<FRoundEnemySpawn> Enemies;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, meta=(ClampMin="0")) int32 ClearGold = 0;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite) TArray<FRewardOffer> RewardPool;
+};
 
 /** Per-encounter record owned by BP_RoundManager, never a second live roster. */
 USTRUCT(BlueprintType)
@@ -54,7 +101,7 @@ struct FUnitSpawnInfo
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FGamePhaseChangedEvent, EGamePhase, Phase);
 
 UCLASS()
-class PROJECT_A_API AAutoBattleGameMode : public AGameModeBase
+class PROJECT_A_API AAutoBattleGameMode : public AGameModeBase, public IShopMatchProgress
 {
     GENERATED_BODY()
 public:
@@ -81,6 +128,33 @@ public:
     /** Read-only text currently shown by the independent round display. */
     UFUNCTION(BlueprintPure, Category="Round|Display")
     FText GetRoundDisplayText() const;
+    UPROPERTY(EditDefaultsOnly, Category="Round|Display", meta=(ClampMin="0"))
+    float RoundClearDisplaySeconds = 4.0f;
+    UPROPERTY(EditDefaultsOnly, Category="Round|Enemy Formation")
+    bool bUseRoundEnemyFormations = false;
+    UPROPERTY(EditDefaultsOnly, Category="Round|Enemy Formation")
+    TSoftObjectPtr<UDataTable> RoundEnemyFormationsTable;
+    UPROPERTY(EditDefaultsOnly, Category="Round|Rewards")
+    TSoftObjectPtr<UDataTable> RoundRewardsTable;
+    // 지정하면 적 편성, 골드, 보상 후보와 진행 설정을 이 테이블에서 읽는다.
+    UPROPERTY(EditDefaultsOnly, Category="Round")
+    TSoftObjectPtr<UDataTable> RoundsTable;
+    UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category="Round|Rewards")
+    int32 LastClearGoldAwarded = 0;
+    UPROPERTY(EditDefaultsOnly, Category="Round|Unit Spawn")
+    TSoftClassPtr<ABattleUnitBase> MainMapUnitClass;
+    UPROPERTY(EditDefaultsOnly, Category="Round|Unit Spawn")
+    TSoftObjectPtr<UDataTable> MainMapUnitDefinitions;
+    UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category="Round|Display")
+    bool bShowingRoundClear = false;
+    UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category="Round|Display")
+    bool bManagedDefeated = false;
+
+    UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category="Shop")
+    TObjectPtr<AShopTransactionManager> MainMapShop;
+    UPROPERTY(EditDefaultsOnly, Category="Shop", meta=(ClampMin="0"))
+    int32 MainMapShopStartingGold = 5;
+    virtual FShopMatchState GetShopMatchState_Implementation() const override;
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Game")
     EGamePhase CurrentPhase = EGamePhase::Preparation;
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Round")
@@ -168,6 +242,9 @@ private:
     void RemoveRoundDisplay();
     TSharedPtr<SWidget> RoundDisplayRoot;
     TSharedPtr<STextBlock> RoundDisplayLabel;
+    TSharedPtr<SWidget> RoundClearBanner;
+    TSharedPtr<STextBlock> RoundClearLabel;
+    TSharedPtr<SWidget> DefeatRestartButton;
     TWeakObjectPtr<UGameViewportClient> RoundDisplayViewport;
     bool InitializeManagedRoundBridge();
     bool CallManaged(FName FunctionName, TFunctionRef<void(UFunction*, uint8*)> Fill);
@@ -175,6 +252,7 @@ private:
     bool BindManagedEvent(FName EventName, FName HandlerName);
     bool CaptureManagedUnits();
     bool RestoreManagedUnits();
+    bool PrepareManagedEnemies(int32 Round, FString& Error);
     void RefreshManagedInteraction(bool bForce = false);
     void ManagedError(const FString& Message);
     UFUNCTION() void ManagedDeploymentRequested(int32 Limit, int32 LimitRoundNumber, FGuid RequestId);
@@ -182,14 +260,27 @@ private:
     UFUNCTION() void ManagedCombatStartRequested(FGuid EncounterId, int32 RoundNumber);
     UFUNCTION() void ManagedCombatStopRequested(FGuid EncounterId, bool bTimedOut);
     UFUNCTION() void ManagedResolutionRequested(FGuid EncounterId, bool bTimedOut);
+    void FinishManagedCombatResolution(FGuid EncounterId, bool bTimedOut);
     UFUNCTION() void ManagedFinalPolicyRequested(FGuid EncounterId);
     UFUNCTION() void ManagedPhaseChanged(uint8 Previous, uint8 Current);
     UFUNCTION() void ManagedAvailabilityChanged(bool bAllowed, FText Message);
     UFUNCTION() void ManagedConfigurationError(FText Message);
+    UFUNCTION() void ManagedRewardRequested(int32 CompletedRoundNumber, FGuid RewardRequestId);
+    UFUNCTION() void ManagedRewardReceived();
+    UFUNCTION() void ReturnEquipmentFromBench(ABattleUnitBase* Unit);
+    bool InitializeMainMapShop();
+    bool GrantManagedClearGold();
+    const FAutoBattleRoundDefinition* GetUnifiedRound(int32 Round) const;
+    void SetBattleHUDHiddenForResult(bool bHideBattleHUD);
+    UPROPERTY(Transient) TObjectPtr<UMainMapShopPlacement> MainMapShopPlacement;
+    FGuid PendingShopRewardId;
+    TWeakObjectPtr<UUserWidget> HiddenBattleHUD;
+    ESlateVisibility SavedBattleHUDVisibility{};
     TArray<FIntegrationRoundParticipant>* ParticipantRecords() const;
     bool ManagedRequestMatches(FName Awaiting, FName IdProperty, FGuid Id) const;
     bool bManagedParticipantsRestored = true;
     FGuid ManagedEncounterId;
+    FTimerHandle RoundClearTimer;
     bool bManagedStartAuthorized = false;
     bool bManagedUnitDragging = false;
     bool bManagedItemDragging = false;

@@ -23,7 +23,7 @@ AUnitCombatTestRunner::AUnitCombatTestRunner()
     PrimaryActorTick.bCanEverTick = true;
     SetRootComponent(CreateDefaultSubobject<USceneComponent>(TEXT("TestRoot")));
     UnitClass = TSoftClassPtr<ABattleUnitBase>(FSoftObjectPath(TEXT("/Game/BluePrints/Units/Test/BP_UnitBase.BP_UnitBase_C")));
-    UnitDataTable = TSoftObjectPtr<UDataTable>(FSoftObjectPath(TEXT("/Game/Data/Units/DT_Units.DT_Units")));
+    UnitDataTable = TSoftObjectPtr<UDataTable>(FSoftObjectPath(TEXT("/Game/Data/DT_Units.DT_Units")));
     Enemy.Row = 5; Enemy.Column = 4;
 }
 void AUnitCombatTestRunner::BeginPlay()

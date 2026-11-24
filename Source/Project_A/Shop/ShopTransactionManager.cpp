@@ -18,6 +18,27 @@ FShopMatchState AShopTransactionManager::GetMatchState() const
     return ReadShopMatchState(GetWorld());
 }
 
+bool AShopTransactionManager::ReturnEquipmentFromBench(FGuid UnitId)
+{
+    if (!CanStartRequest() || !UnitId.IsValid()) return false;
+    const FShopMatchState Match = GetMatchState();
+    FRosterUnit Unit;
+    if (!Match.CanManageBoard() || Roster->GetPosition(UnitId).Location != EUnitLocation::Bench
+        || !Roster->GetUnit(UnitId, Unit)) return false;
+
+    TArray<FName> Equipment;
+    if (!IUnitPlacement::Execute_GetUnitEquipment(Roster->Placement.GetObject(), UnitId, Equipment)) return false;
+    if (Equipment.IsEmpty()) return true;
+    TGuardValue<bool> Guard(Shop->bChanging, true);
+    TArray<FName> Inventory = Items->GetInventory();
+    Items->PlanReturn(Inventory, Equipment);
+    FRosterUnitChange Change = Roster->MakeChange(ERosterUnitEdit::Update, Unit);
+    Change.bReplaceEquipment = true;
+    if (!CommitChanges({ Change }, MoveTemp(Inventory), Match)) return false;
+    Roster->NotifyChanged();
+    return true;
+}
+
 bool AShopTransactionManager::CanStartRequest() const
 {
     return IsConfigured() && !Shop->bChanging && !Roster->GetBench()->IsApplying();
@@ -74,6 +95,23 @@ bool AShopTransactionManager::EnterPreparation()
 
     TArray<FShopOffer> Offers;
     if (!Shop->IsShopLocked() && !Shop->Catalog.IsEmpty() && !Shop->GenerateOffers(Match.Round, Offers)) return false;
+    if (Match.Round == 1 && Roster->bUseLiveBench && Roster->Units.IsEmpty() && !Offers.IsEmpty())
+    {
+        const auto IsAffordable = [this](const FShopOffer& Offer)
+        {
+            return !Offer.UnitId.IsNone() && Offer.Cost > 0 && Offer.Cost <= Shop->StartingGold;
+        };
+        if (!Offers.ContainsByPredicate(IsAffordable))
+        {
+            const FShopOffer* Starter = Shop->Catalog.FindByPredicate(IsAffordable);
+            if (!Starter)
+            {
+                UE_LOG(LogTemp, Error, TEXT("The opening shop has no unit affordable with its starting gold."));
+                return false;
+            }
+            Offers[0] = *Starter;
+        }
+    }
     TArray<FRosterUnitChange> Changes;
     TArray<ARosterManager::FMerge> Merges;
     Roster->PlanPendingMerges(Changes, Merges);
@@ -219,6 +257,11 @@ ETransactionResult AShopTransactionManager::RequestReward(int32 Slot, int32 Sele
         {
             const auto Result = AddUnit(Shop->GetOfferDefinition(Reward.DefinitionId), Reward.Stars, Match);
             if (Result != ETransactionResult::Success) return Result;
+        }
+        else if (Reward.Kind == ERewardKind::Gold)
+        {
+            if (Reward.GoldAmount <= 0) return ETransactionResult::InvalidSelection;
+            Shop->AddGold(Reward.GoldAmount);
         }
         else if (!Items->GrantItem(Reward.DefinitionId))
         {

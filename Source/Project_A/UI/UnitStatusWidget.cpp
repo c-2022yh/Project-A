@@ -3,6 +3,7 @@
 #include "Engine/Texture2D.h"
 #include "Rendering/DrawElements.h"
 #include "Styling/CoreStyle.h"
+#include "../Shop/ShopTypes.h"
 
 UUnitStatusWidget::UUnitStatusWidget(const FObjectInitializer& ObjectInitializer) : Super(ObjectInitializer)
 {
@@ -25,6 +26,7 @@ void UUnitStatusWidget::BindUnit()
         Unit->OnManaChanged.AddUniqueDynamic(this, &ThisClass::HandleUnitChanged);
         Unit->OnShieldChanged.AddUniqueDynamic(this, &ThisClass::HandleUnitChanged);
         Unit->OnStatsChanged.AddUniqueDynamic(this, &ThisClass::HandleUnitChanged);
+        Unit->OnEquipmentChanged.AddUniqueDynamic(this, &ThisClass::HandleUnitChanged);
         Unit->OnUnitDied.AddUniqueDynamic(this, &ThisClass::HandleUnitChanged);
     }
 }
@@ -37,6 +39,7 @@ void UUnitStatusWidget::UnbindUnit()
         Unit->OnManaChanged.RemoveDynamic(this, &ThisClass::HandleUnitChanged);
         Unit->OnShieldChanged.RemoveDynamic(this, &ThisClass::HandleUnitChanged);
         Unit->OnStatsChanged.RemoveDynamic(this, &ThisClass::HandleUnitChanged);
+        Unit->OnEquipmentChanged.RemoveDynamic(this, &ThisClass::HandleUnitChanged);
         Unit->OnUnitDied.RemoveDynamic(this, &ThisClass::HandleUnitChanged);
     }
 }
@@ -48,6 +51,7 @@ void UUnitStatusWidget::SetUnit(ABattleUnitBase* Unit)
         UnbindUnit();
         SourceUnit = Unit;
         ItemIcons.Empty();
+        ItemLabels.Empty();
     }
     BindUnit();
     RefreshStatus();
@@ -76,7 +80,20 @@ void UUnitStatusWidget::HandleUnitChanged(ABattleUnitBase* Unit) { RefreshStatus
 void UUnitStatusWidget::SetItemIcons(const TArray<UTexture2D*>& Icons)
 {
     ItemIcons.Empty();
+    ItemLabels.Empty();
     for (UTexture2D* Icon : Icons) if (IsValid(Icon)) ItemIcons.Add(Icon);
+    InvalidateLayoutAndVolatility();
+}
+
+void UUnitStatusWidget::SetEquipment(const TArray<FItemDefinition>& Equipment)
+{
+    ItemIcons.Reset();
+    ItemLabels.Reset();
+    for (const FItemDefinition& Item : Equipment)
+    {
+        ItemIcons.Add(Item.Icon);
+        ItemLabels.Add(Item.Label);
+    }
     InvalidateLayoutAndVolatility();
 }
 
@@ -134,13 +151,21 @@ int32 UUnitStatusWidget::NativePaint(const FPaintArgs& Args, const FGeometry& Ge
         const float X = 1.f + Index * (IconSize + 3.f);
         Box(X, 1.f, IconSize + 2.f, IconSize + 2.f, FLinearColor(0.32f,0.26f,0.14f,1));
         Box(X+1.f, 2.f, IconSize, IconSize, Background);
-        if (ItemIcons.IsValidIndex(Index))
+        if (ItemIcons.IsValidIndex(Index) && IsValid(ItemIcons[Index]))
         {
             FSlateBrush IconBrush;
             IconBrush.SetResourceObject(ItemIcons[Index]);
             IconBrush.DrawAs = ESlateBrushDrawType::Image;
             FSlateDrawElement::MakeBox(Elements, ++Layer, Geometry.ToPaintGeometry(FVector2D(IconSize,IconSize), FSlateLayoutTransform(FVector2D(X+1.f,2.f))),
                 &IconBrush, ESlateDrawEffect::None, Tint);
+        }
+        else if (ItemLabels.IsValidIndex(Index))
+        {
+            FSlateDrawElement::MakeText(Elements, ++Layer,
+                Geometry.ToPaintGeometry(FVector2D(IconSize, IconSize), FSlateLayoutTransform(FVector2D(X+2.f, 3.f))),
+                FText::FromString(ItemLabels[Index].ToString().Left(2)),
+                FCoreStyle::GetDefaultFontStyle("Bold", FMath::Max(8, FMath::RoundToInt(IconSize * 0.45f))),
+                ESlateDrawEffect::None, FLinearColor(1.f, 0.82f, 0.39f) * Tint);
         }
     }
 

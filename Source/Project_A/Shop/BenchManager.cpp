@@ -19,18 +19,28 @@ FUnitPosition UBenchManager::SlotPosition(int32 Slot)
 
 FGuid UBenchManager::GetOccupant(int32 Slot) const
 {
+    const ARosterManager* Roster = Cast<ARosterManager>(GetOwner());
+    if (IsValidSlot(Slot) && Roster && Roster->bUseLiveBench && Roster->Placement.GetObject())
+        return IUnitPlacement::Execute_GetOccupant(Roster->Placement.GetObject(), SlotPosition(Slot));
     return IsValidSlot(Slot) ? Slots[Slot] : FGuid();
 }
 
 FUnitPosition UBenchManager::FindFreeSlot() const
 {
-    const int32 Slot = Slots.IndexOfByPredicate([](const FGuid& Id) { return !Id.IsValid(); });
-    return Slot == INDEX_NONE ? FUnitPosition() : SlotPosition(Slot);
+    for (int32 Slot = 0; Slot < SlotCount; ++Slot)
+        if (!GetOccupant(Slot).IsValid()) return SlotPosition(Slot);
+    return {};
 }
 
 FUnitPosition UBenchManager::FindPosition(FGuid UnitId) const
 {
     if (!UnitId.IsValid()) return {};
+    const ARosterManager* Roster = Cast<ARosterManager>(GetOwner());
+    if (Roster && Roster->bUseLiveBench && Roster->Placement.GetObject())
+    {
+        const FUnitPosition Position = IUnitPlacement::Execute_GetUnitPosition(Roster->Placement.GetObject(), UnitId);
+        return Position.Location == EUnitLocation::Bench ? Position : FUnitPosition();
+    }
     const int32 Slot = Slots.IndexOfByKey(UnitId);
     return Slot == INDEX_NONE ? FUnitPosition() : SlotPosition(Slot);
 }
@@ -43,6 +53,8 @@ bool UBenchManager::ApplyChanges(const TArray<FRosterUnitChange>& Changes, const
     if (!Roster) return false;
 
     TGuardValue<bool> Guard(bApplying, true);
+    // 메인맵에서는 보드에 생성된 실제 대기석이 점유 상태를 소유한다.
+    if (Roster->bUseLiveBench) return Roster->Apply(Changes, Match.Phase, Match.DeploymentLimit);
     TArray<FGuid> Next = Slots;
     for (const FRosterUnitChange& Change : Changes)
     {
