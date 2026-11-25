@@ -71,6 +71,13 @@ public:
     UFUNCTION(BlueprintPure, Category="Shop")
     FShopOffer GetOfferDefinition(FName UnitId) const;
 
+    // 통합 DT_Rounds의 확률. 항목이 없는 라운드는 기존 ShopOdds를 사용한다.
+    UPROPERTY(Transient)
+    TMap<int32, FShopRoundOdds> UnifiedRoundOdds;
+
+    bool IsRewardValid(const FRewardOffer& Reward, TFunctionRef<bool(FName)> IsItemValid,
+        const TArray<FName>& RandomItemIds = {}) const;
+
 private:
     friend class AShopTransactionManager;
 
@@ -93,12 +100,14 @@ private:
     ETransactionResult Reroll(int32 Round);
     void SetShopLock(bool bLocked);
     bool CreditRoundGold(int32 Round, int32 Amount);
-    bool OpenRewards(int32 Round, TFunctionRef<bool(FName)> IsItemValid);
+    bool OpenRewards(int32 Round, TFunctionRef<bool(FName)> IsItemValid, const TArray<FName>& RandomItemIds);
     bool GetReward(int32 Round, int32 Slot, int32 Revision, FRewardOffer& Reward) const;
     void CommitReward();
     void AddGold(int64 Amount);
     bool GenerateOffers(int32 Round, TArray<FShopOffer>& NewOffers) const;
-    bool GenerateRewards(TArray<FRewardOffer>& NewRewards, TFunctionRef<bool(FName)> IsItemValid) const;
+    bool GenerateRewards(TArray<FRewardOffer>& NewRewards, TFunctionRef<bool(FName)> IsItemValid,
+        const TArray<FName>& RandomItemIds) const;
+    TArray<FShopOffer> GetRandomRewardCandidates(int32 Cost) const;
     void CommitPurchase(int32 Slot, int32 Cost);
     void CreditSale(const FRosterUnit& Unit);
     bool CreditKill(FGuid DefeatedEnemyId);

@@ -55,6 +55,9 @@ struct PROJECT_A_API FAutoBattleRoundDefinition : public FTableRowBase
     UPROPERTY(EditAnywhere, BlueprintReadWrite) TArray<FRoundEnemySpawn> Enemies;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, meta=(ClampMin="0")) int32 ClearGold = 0;
     UPROPERTY(EditAnywhere, BlueprintReadWrite) TArray<FRewardOffer> RewardPool;
+    // 인덱스 0~4 = 1~5코스트 상대 가중치. 빈 배열은 기존 ShopOdds 설정을 사용한다.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, meta=(ToolTip="1~5코스트 순서로 5개 입력. 예: 70,25,5,0,0. 0은 등장 제외. 빈 배열은 기존 확률 유지."))
+    TArray<float> ShopCostWeights;
 };
 
 /** Per-encounter record owned by BP_RoundManager, never a second live roster. */

@@ -112,6 +112,14 @@ struct FItemBonuses
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Shop") float AttackDamagePercent = 0;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Shop") float AbilityPowerPercent = 0;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Shop") float ArmorPercent = 0;
+    // 0.1 = 평타/피격 마나 획득량 +10%. 시작 마나와 스킬의 직접 지급에는 적용하지 않는다.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Shop") float ManaGainPercent = 0;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Shop") float MagicResistance = 0;
+    // 0.1 = 치명타 확률 +10%p. 피해 배율 0.2 = 기존 1.5배에서 1.7배.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Shop") float CriticalChance = 0;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Shop") float CriticalMultiplier = 0;
+    // 전투 시작 시 지급할 마나에 고정 수치를 더한다. 마나 획득 증가율은 적용하지 않는다.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Shop") float StartMana = 0;
 
     void Add(const FItemBonuses& Other);
 };
@@ -161,7 +169,7 @@ struct FRosterUnit
 UENUM(BlueprintType)
 enum class ERewardKind : uint8
 {
-    Unit, Item, Gold
+    Unit, Item, Gold, RandomUnit, RandomItem
 };
 
 USTRUCT(BlueprintType)
@@ -182,6 +190,9 @@ struct FRewardOffer
     float Weight = 1;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Shop", meta=(ClampMin="0"))
     int32 GoldAmount = 0;
+    // RandomUnit 전용. DefinitionId는 비워두고, 이 코스트에서 Stars 성급 유닛을 추첨한다.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Shop", meta=(ClampMin="1", ClampMax="5"))
+    int32 UnitCost = 1;
 };
 
 UENUM(BlueprintType)

@@ -80,11 +80,11 @@ void AShopManager::SetShopLock(bool bLocked)
     bShopLocked = bLocked;
 }
 
-bool AShopManager::OpenRewards(int32 Round, TFunctionRef<bool(FName)> IsItemValid)
+bool AShopManager::OpenRewards(int32 Round, TFunctionRef<bool(FName)> IsItemValid, const TArray<FName>& RandomItemIds)
 {
     if (Round <= LastRewardRound || !Rewards.IsEmpty()) return false;
     TArray<FRewardOffer> Drawn;
-    if (!GenerateRewards(Drawn, IsItemValid)) return false;
+    if (!GenerateRewards(Drawn, IsItemValid, RandomItemIds)) return false;
     Rewards = MoveTemp(Drawn);
     LastRewardRound = Round;
     ++RewardRevision;
@@ -114,7 +114,8 @@ FShopOffer AShopManager::GetOfferDefinition(FName UnitId) const
 bool AShopManager::GenerateOffers(int32 Round, TArray<FShopOffer>& NewOffers) const
 {
     NewOffers.Init(FShopOffer(), ShopSlots);
-    const FShopRoundOdds* Odds = ShopOdds ? ShopOdds->Rounds.Find(Round) : nullptr;
+    const FShopRoundOdds* Odds = UnifiedRoundOdds.Find(Round);
+    if (!Odds && ShopOdds) Odds = ShopOdds->Rounds.Find(Round);
     TMap<int32, TArray<const FShopOffer*>> OffersByCost;
     TSet<FName> Included;
     for (const FShopOffer& Offer : Catalog)
@@ -141,17 +142,50 @@ bool AShopManager::GenerateOffers(int32 Round, TArray<FShopOffer>& NewOffers) co
     return true;
 }
 
-bool AShopManager::GenerateRewards(TArray<FRewardOffer>& NewRewards, TFunctionRef<bool(FName)> IsItemValid) const
+TArray<FShopOffer> AShopManager::GetRandomRewardCandidates(int32 Cost) const
 {
+    TArray<FShopOffer> Candidates;
+    TSet<FName> Included;
+    if (Cost < 1 || Cost > 5) return Candidates;
+    for (const FShopOffer& Offer : Catalog)
+    {
+        if (Offer.UnitId.IsNone() || Offer.Cost != Cost || Included.Contains(Offer.UnitId)) continue;
+        Included.Add(Offer.UnitId);
+        Candidates.Add(Offer);
+    }
+    return Candidates;
+}
+
+bool AShopManager::IsRewardValid(const FRewardOffer& Reward, TFunctionRef<bool(FName)> IsItemValid,
+    const TArray<FName>& RandomItemIds) const
+{
+    if (ValidWeight(Reward.Weight) <= 0) return false;
+    switch (Reward.Kind)
+    {
+        case ERewardKind::Unit:
+            return Reward.Stars >= 1 && Reward.Stars <= 2 && !GetOfferDefinition(Reward.DefinitionId).UnitId.IsNone();
+        case ERewardKind::RandomUnit:
+            return Reward.Stars >= 1 && Reward.Stars <= 2 && !GetRandomRewardCandidates(Reward.UnitCost).IsEmpty();
+        case ERewardKind::Gold: return Reward.GoldAmount > 0;
+        case ERewardKind::Item: return IsItemValid(Reward.DefinitionId);
+        case ERewardKind::RandomItem:
+            return RandomItemIds.ContainsByPredicate([&IsItemValid](FName Id)
+            { return !Id.IsNone() && IsItemValid(Id); });
+        default: return false;
+    }
+}
+
+bool AShopManager::GenerateRewards(TArray<FRewardOffer>& NewRewards, TFunctionRef<bool(FName)> IsItemValid,
+    const TArray<FName>& RandomItemIds) const
+{
+    TArray<FName> Items;
+    for (FName Id : RandomItemIds)
+        if (!Id.IsNone() && IsItemValid(Id)) Items.AddUnique(Id);
     TArray<FRewardOffer> Candidates;
     TArray<double> Weights;
     for (const FRewardOffer& Reward : RewardPool)
     {
-        if (ValidWeight(Reward.Weight) <= 0 || (Reward.Kind != ERewardKind::Gold && Reward.DefinitionId.IsNone())) continue;
-        const bool bValid = Reward.Kind == ERewardKind::Unit
-            ? Reward.Stars >= 1 && Reward.Stars <= 2 && !GetOfferDefinition(Reward.DefinitionId).UnitId.IsNone()
-            : Reward.Kind == ERewardKind::Gold ? Reward.GoldAmount > 0 : IsItemValid(Reward.DefinitionId);
-        if (!bValid) continue;
+        if (!IsRewardValid(Reward, IsItemValid, Items)) continue;
         Candidates.Add(Reward);
         Weights.Add(Reward.Weight);
     }
@@ -159,7 +193,19 @@ bool AShopManager::GenerateRewards(TArray<FRewardOffer>& NewRewards, TFunctionRe
     {
         const int32 Index = DrawWeightedIndex(Weights);
         if (Index == INDEX_NONE) return false;
-        NewRewards.Add(Candidates[Index]);
+        FRewardOffer Drawn = Candidates[Index];
+        if (Drawn.Kind == ERewardKind::RandomUnit)
+        {
+            const TArray<FShopOffer> Units = GetRandomRewardCandidates(Drawn.UnitCost);
+            // 카드 생성 시 결과를 고정한다. 벤치가 가득 차 수령을 재시도해도 다시 추첨하지 않는다.
+            Drawn.DefinitionId = Units[FMath::RandHelper(Units.Num())].UnitId;
+        }
+        else if (Drawn.Kind == ERewardKind::RandomItem)
+        {
+            // 카드에는 종류를 숨기되, 실제 지급할 아이템은 생성 시 한 번만 추첨한다.
+            Drawn.DefinitionId = Items[FMath::RandHelper(Items.Num())];
+        }
+        NewRewards.Add(Drawn);
         Weights[Index] = 0;
     }
     return true;

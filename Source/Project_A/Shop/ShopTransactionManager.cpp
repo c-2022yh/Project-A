@@ -4,6 +4,29 @@
 #include "ItemManager.h"
 #include "ShopManager.h"
 #include "ShopMatchProgress.h"
+#include "../BattleUnitBase.h"
+
+namespace
+{
+    TSet<FGuid> CaptureUnitIds(const ARosterManager& Roster)
+    {
+        TSet<FGuid> Ids;
+        for (const FRosterUnit& Unit : Roster.GetUnits()) Ids.Add(Unit.Id);
+        return Ids;
+    }
+
+    void PlayNewUnitSpawnAnimations(ARosterManager& Roster, const TSet<FGuid>& PreviousIds)
+    {
+        // 거래가 성공한 뒤 새로 생긴 대기석 유닛만 재생한다.
+        // 기존 유닛의 승급, 즉시 소비된 합성 재료, 배치 이동에는 재생하지 않는다.
+        for (const FRosterUnit& Unit : Roster.GetUnits())
+        {
+            if (PreviousIds.Contains(Unit.Id) || Roster.GetPosition(Unit.Id).Location != EUnitLocation::Bench) continue;
+            ABattleUnitBase* Actor = IUnitPlacement::Execute_GetBattleUnit(Roster.Placement.GetObject(), Unit.Id);
+            if (IsValid(Actor)) Actor->PlaySpawnAnimation();
+        }
+    }
+}
 
 bool AShopTransactionManager::IsConfigured() const
 {
@@ -57,12 +80,23 @@ bool AShopTransactionManager::ApplyMerges(TArray<FRosterUnitChange>& Changes,
     const TArray<ARosterManager::FMerge>& Merges, const FShopMatchState& Match)
 {
     TArray<FName> Inventory = Items->GetInventory();
+    TArray<FMergePresentation> Presentations;
     for (const ARosterManager::FMerge& Merge : Merges)
     {
+        // 실패 시에는 재생하지 않는다. 재료 제거 전에 위치만 기록하고 확정 후 결과 유닛에 전달한다.
+        FMergePresentation& Presentation = Presentations.AddDefaulted_GetRef();
+        Presentation.ResultUnit = IUnitPlacement::Execute_GetBattleUnit(Roster->Placement.GetObject(), Merge.Kept);
+        Presentation.UnspawnedMaterialCount = FMath::Max(0, 3 - Merge.Materials.Num());
         TArray<FName> Inherited;
         TArray<FUnitSkillProgress> SkillProgress;
         for (FGuid Id : Merge.Materials)
         {
+            if (Id != Merge.Kept)
+            {
+                if (ABattleUnitBase* MaterialActor = IUnitPlacement::Execute_GetBattleUnit(Roster->Placement.GetObject(), Id);
+                    IsValid(MaterialActor))
+                    Presentation.MaterialLocations.Add(MaterialActor->GetActorLocation());
+            }
             TArray<FName> Equipped;
             if (!Roster->GetUnitEquipment(Id, Equipped)) return false;
             Inherited.Append(Equipped);
@@ -82,7 +116,22 @@ bool AShopTransactionManager::ApplyMerges(TArray<FRosterUnitChange>& Changes,
         Result->Equipment = MoveTemp(Inherited);
         Result->Unit.SkillProgress = MoveTemp(SkillProgress);
     }
-    return CommitChanges(Changes, MoveTemp(Inventory), Match);
+    if (!CommitChanges(Changes, MoveTemp(Inventory), Match)) return false;
+    PendingMergePresentations.Append(MoveTemp(Presentations));
+    return true;
+}
+
+void AShopTransactionManager::FlushMergePresentations()
+{
+    // 골드/상품/보상까지 갱신한 뒤 호출한다. 재료 Actor 참조는 보관하지 않는다.
+    TArray<FMergePresentation> Presentations = MoveTemp(PendingMergePresentations);
+    PendingMergePresentations.Reset();
+    for (const FMergePresentation& Presentation : Presentations)
+    {
+        ABattleUnitBase* Unit = Presentation.ResultUnit.Get();
+        if (IsValid(Unit) && Unit->IsAlive() && Unit->StarLevel == 2)
+            Unit->ReceiveMerged(Presentation.MaterialLocations, Presentation.UnspawnedMaterialCount);
+    }
 }
 
 bool AShopTransactionManager::EnterPreparation()
@@ -99,7 +148,11 @@ bool AShopTransactionManager::EnterPreparation()
     {
         const auto IsAffordable = [this](const FShopOffer& Offer)
         {
-            return !Offer.UnitId.IsNone() && Offer.Cost > 0 && Offer.Cost <= Shop->StartingGold;
+            const FShopRoundOdds* Odds = Shop->UnifiedRoundOdds.Find(1);
+            // 첫 구매 보장도 통합 DT에서 제외한 코스트를 다시 등장시키지 않는다.
+            const bool bAllowedCost = !Odds || (Odds->CostWeights.IsValidIndex(Offer.Cost - 1)
+                && Odds->CostWeights[Offer.Cost - 1] > 0.f);
+            return bAllowedCost && !Offer.UnitId.IsNone() && Offer.Cost > 0 && Offer.Cost <= Shop->StartingGold;
         };
         if (!Offers.ContainsByPredicate(IsAffordable))
         {
@@ -118,6 +171,7 @@ bool AShopTransactionManager::EnterPreparation()
     if (!ApplyMerges(Changes, Merges, Match)) return false;
 
     Shop->CommitPreparation(Match.Round, MoveTemp(Offers));
+    FlushMergePresentations();
     Roster->NotifyChanged();
     Shop->OnShopChanged.Broadcast();
     return true;
@@ -146,7 +200,7 @@ bool AShopTransactionManager::OpenRewards()
     {
         FItemDefinition Item;
         return Items->GetItem(Id, Item);
-    })) return false;
+    }, Items->GetRandomRewardCandidates())) return false;
 
     Shop->OnShopChanged.Broadcast();
     return true;
@@ -207,10 +261,13 @@ ETransactionResult AShopTransactionManager::RequestBuy(int32 Slot, int32 OfferRe
     const auto Validation = Shop->ValidatePurchase(Slot, OfferRevision, Offer);
     if (Validation != ETransactionResult::Success) return Validation;
 
+    const TSet<FGuid> PreviousIds = CaptureUnitIds(*Roster);
     const auto Result = AddUnit(Offer, 1, Match);
     if (Result != ETransactionResult::Success) return Result;
 
     Shop->CommitPurchase(Slot, Offer.Cost);
+    PlayNewUnitSpawnAnimations(*Roster, PreviousIds);
+    FlushMergePresentations();
     Roster->NotifyChanged();
     Shop->OnShopChanged.Broadcast();
     return Result;
@@ -253,7 +310,9 @@ ETransactionResult AShopTransactionManager::RequestReward(int32 Slot, int32 Sele
         FRewardOffer Reward;
         if (!Shop->GetReward(Match.Round, Slot, SelectionRevision, Reward)) return ETransactionResult::InvalidSelection;
 
-        if (Reward.Kind == ERewardKind::Unit)
+        const bool bUnitReward = Reward.Kind == ERewardKind::Unit || Reward.Kind == ERewardKind::RandomUnit;
+        const TSet<FGuid> PreviousIds = bUnitReward ? CaptureUnitIds(*Roster) : TSet<FGuid>();
+        if (Reward.Kind == ERewardKind::Unit || Reward.Kind == ERewardKind::RandomUnit)
         {
             const auto Result = AddUnit(Shop->GetOfferDefinition(Reward.DefinitionId), Reward.Stars, Match);
             if (Result != ETransactionResult::Success) return Result;
@@ -263,12 +322,15 @@ ETransactionResult AShopTransactionManager::RequestReward(int32 Slot, int32 Sele
             if (Reward.GoldAmount <= 0) return ETransactionResult::InvalidSelection;
             Shop->AddGold(Reward.GoldAmount);
         }
-        else if (!Items->GrantItem(Reward.DefinitionId))
+        else if (Reward.Kind == ERewardKind::Item || Reward.Kind == ERewardKind::RandomItem)
         {
-            return ETransactionResult::Unavailable;
+            if (!Items->GrantItem(Reward.DefinitionId)) return ETransactionResult::Unavailable;
         }
+        else return ETransactionResult::InvalidSelection;
 
         Shop->CommitReward();
+        if (bUnitReward) PlayNewUnitSpawnAnimations(*Roster, PreviousIds);
+        FlushMergePresentations();
         Roster->NotifyChanged();
         Shop->OnShopChanged.Broadcast();
     }

@@ -110,6 +110,7 @@ public:
     UPROPERTY(BlueprintAssignable, Category="Unit|Events") FBattleUnitHealEvent OnHealed;
 
     UFUNCTION(BlueprintCallable, Category="Unit|Setup") bool InitializeUnit(FDataTableRowHandle Data, EBattleTeam Team, int32 Stars, FString& Error);
+    UFUNCTION(BlueprintPure, Category="Unit|Setup") FText GetDisplayName() const;
     UFUNCTION(BlueprintCallable, CallInEditor, Category="Unit|Setup") bool RefreshUnitFromData();
     UFUNCTION(BlueprintCallable, Category="Unit|Setup") void ApplyVisuals();
     UFUNCTION(BlueprintCallable, Category="Unit|Visual") void RefreshStatusWidget();
@@ -119,6 +120,11 @@ public:
     UFUNCTION(BlueprintCallable, Category="Unit|Visual") float PlayVictoryAnimation();
     UFUNCTION(BlueprintCallable, Category="Unit|Stats") void RecalculateStats();
     UFUNCTION(BlueprintCallable, Category="Unit|Stats") bool SetStarLevel(int32 Stars);
+    // 합성 거래가 확정된 뒤 결과 유닛에서 한 번 호출한다. 위치는 제거된 재료의 월드 좌표다.
+    // 구매/보상으로 즉시 소비된 세 번째 유닛은 Actor가 없으므로 위치 대신 개수로 전달한다.
+    // BP에서는 이펙트/사운드/별 표시만 처리하고 실제 합성이나 유닛 이동을 다시 실행하지 않는다.
+    UFUNCTION(BlueprintImplementableEvent, Category="Unit|Presentation", meta=(DisplayName="Unit Merged"))
+    void ReceiveMerged(const TArray<FVector>& MaterialLocations, int32 UnspawnedMaterialCount);
     UFUNCTION(BlueprintSetter) void SetTeamType(EBattleTeam Team);
     // 아이템/강화 소유권은 외부가 관리한다. 같은 SourceId는 교체하고 서로 다른 값은 함께 적용한다.
     UFUNCTION(BlueprintCallable, Category="Unit|Stats") bool ApplyUpgrade(FName SourceId, const FUnitStatModifier& Modifier);
@@ -293,6 +299,7 @@ private:
     float DamageRemainingRatio = 1.f;
     float AttackSlow = 0.f;
     float AttackSpeedBonusBeforeSkills = 0.f;
+    float CombatManaGainBonus = 0.f;
     float OvertimeAttackSpeed = 0.f;
     float OvertimeDamageMultiplier = 1.f;
     bool bActionCommitted = false;

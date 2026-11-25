@@ -70,6 +70,15 @@ public:
     FShopMatchState GetMatchState() const;
 
 private:
+    struct FMergePresentation
+    {
+        TWeakObjectPtr<ABattleUnitBase> ResultUnit;
+        TArray<FVector> MaterialLocations;
+        int32 UnspawnedMaterialCount = 0;
+    };
+    TArray<FMergePresentation> PendingMergePresentations;
+    void FlushMergePresentations();
+
     bool CanStartRequest() const;
     ETransactionResult AddUnit(const FShopOffer& Offer, int32 Stars, const FShopMatchState& Match);
     ETransactionResult ChangeEquipment(FGuid UnitId, FName ItemId, TOptional<int32> UnequipSlot);

@@ -11,4 +11,9 @@ void FItemBonuses::Add(const FItemBonuses& Other)
     AttackDamagePercent += Other.AttackDamagePercent;
     AbilityPowerPercent += Other.AbilityPowerPercent;
     ArmorPercent += Other.ArmorPercent;
+    ManaGainPercent += Other.ManaGainPercent;
+    MagicResistance += Other.MagicResistance;
+    CriticalChance += Other.CriticalChance;
+    CriticalMultiplier += Other.CriticalMultiplier;
+    StartMana += Other.StartMana;
 }

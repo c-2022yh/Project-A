@@ -175,6 +175,9 @@ struct PROJECT_A_API FUnitStatModifier
     UPROPERTY(EditAnywhere, BlueprintReadWrite) float AttackDamagePercent = 0.f;
     UPROPERTY(EditAnywhere, BlueprintReadWrite) float AbilityPowerPercent = 0.f;
     UPROPERTY(EditAnywhere, BlueprintReadWrite) float ArmorPercent = 0.f;
+    // 평타/피격 마나의 증가율. 장비 여러 개의 값은 합산한다.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite) float ManaGainPercent = 0.f;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite) float StartMana = 0.f;
     UPROPERTY(EditAnywhere, BlueprintReadWrite) float MaxHealth = 0.f;
     UPROPERTY(EditAnywhere, BlueprintReadWrite) float AttackDamage = 0.f;
     UPROPERTY(EditAnywhere, BlueprintReadWrite) float AbilityPower = 0.f;
@@ -336,6 +339,7 @@ struct PROJECT_A_API FUnitDefinition : public FTableRowBase
 {
     GENERATED_BODY()
     // 데이터 테이블의 RowName이 유닛 ID다. 별도 ID를 중복 저장하지 않는다.
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, meta=(ToolTip="화면에 표시할 유닛 이름. 비워두면 기존 RowName을 표시한다.")) FText DisplayName;
     UPROPERTY(EditAnywhere, BlueprintReadOnly, meta=(ClampMin="1", ClampMax="5", ToolTip="1~5코스트 분류. 초기화 시 범위를 검사하며 현재 상점 구매 가격은 별도 Offer.Cost를 사용한다.")) int32 Cost = 1;
     UPROPERTY(EditAnywhere, BlueprintReadOnly, meta=(ToolTip="1성 원본 능력치. 성급 배율과 영구 성장, 장비, 임시 효과를 적용해 최종 능력치를 계산한다.")) FUnitStats BaseStats;
     // 새 행은 스킬 BP 클래스만 장착한다. 설정과 실행 상태는 스킬 객체가 소유한다.

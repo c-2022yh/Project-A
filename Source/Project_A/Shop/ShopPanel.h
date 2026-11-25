@@ -48,6 +48,7 @@ private:
     TArray<FButton> Buttons;
     FVector2D ViewOrigin = FVector2D::ZeroVector;
     FVector2D ViewSize = FVector2D::ZeroVector;
+    float ShopBottom = 0.f;
     FGuid Selected;
     FString Feedback;
     int32 DisplayedRewardRevision = INDEX_NONE;

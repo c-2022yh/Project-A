@@ -23,6 +23,18 @@ bool AItemManager::GetItem(FName Id, FItemDefinition& Item) const
     return true;
 }
 
+TArray<FName> AItemManager::GetRandomRewardCandidates() const
+{
+    TArray<FName> Candidates;
+    if (!ItemDefinitions || ItemDefinitions->GetRowStruct() != FItemDefinition::StaticStruct()) return Candidates;
+    for (FName Id : ItemDefinitions->GetRowNames())
+    {
+        FItemDefinition Item;
+        if (GetItem(Id, Item)) Candidates.Add(Id);
+    }
+    return Candidates;
+}
+
 bool AItemManager::GrantItem(FName Id)
 {
     FItemDefinition Item;

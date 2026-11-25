@@ -19,15 +19,19 @@
 
 namespace
 {
+    // 공통 모델의 정면은 +Y이다. DT VisualTransform 회전은 0으로 두고 Actor만 돌린다.
+    constexpr float ModelFacingYawOffset = -90.f;
+    const FRotator PreparationRotation(0.f, 180.f, 0.f);
     float Safe(float Value, float Fallback = 0.f) { return FMath::IsFinite(Value) ? Value : Fallback; }
     float Positive(float Value) { return FMath::Max(0.f, Safe(Value)); }
     float Fraction(float Value) { return FMath::Clamp(Safe(Value), 0.f, 1.f); }
     void FaceLocation(AActor& Actor, const FVector& Location)
     {
-        // 액터의 논리적 정면(+X)만 돌린다. 모델 정면 보정은 DT의 VisualTransform을 유지한다.
+        // 이동/공격/적 대상 스킬이 같은 모델 축 보정을 사용한다. 전투 중 Idle은 방향을 유지한다.
         FVector Direction = Location - Actor.GetActorLocation();
         Direction.Z = 0.f;
-        if (!Direction.IsNearlyZero()) Actor.SetActorRotation(Direction.Rotation());
+        if (!Direction.IsNearlyZero())
+            Actor.SetActorRotation(FRotator(0.f, Direction.Rotation().Yaw + ModelFacingYawOffset, 0.f));
     }
     // 음수 저항 정책만 분리한다. 양수 공식과 피해 계산 순서는 명세의 확정 규칙이다.
     float ResistanceFactor(float Resistance, EUnitNegativeResistancePolicy Policy)
@@ -148,9 +152,15 @@ bool ABattleUnitBase::InitializeUnit(FDataTableRowHandle Data, EBattleTeam Team,
     ActionState = EUnitActionState::Idle;
     SelectionCollision->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
     SetActorHiddenInGame(false);
+    SetActorRotation(PreparationRotation);
     ApplyVisuals();
     OnManaChanged.Broadcast(this);
     return true;
+}
+
+FText ABattleUnitBase::GetDisplayName() const
+{
+    return Definition.DisplayName.IsEmpty() ? FText::FromName(UnitID) : Definition.DisplayName;
 }
 
 bool ABattleUnitBase::RefreshUnitFromData()
@@ -170,12 +180,15 @@ void ABattleUnitBase::RecalculateStats()
     float SpeedBonus = OvertimeAttackSpeed, ArmorReduction = 0.f, MRReduction = 0.f, ADReduction = 0.f, APReduction = 0.f;
     float HealthPercent = 0.f, AttackDamagePercent = 0.f, AbilityPowerPercent = 0.f, ArmorPercent = 0.f;
     AttackSlow = 0.f; DamageIncrease = 0.f; DamageRemainingRatio = 1.f; bManaBlocked = false;
+    CombatManaGainBonus = 0.f;
     const auto Add = [&](const FUnitStatModifier& Mod)
     {
         HealthPercent += Safe(Mod.HealthPercent);
         AttackDamagePercent += Safe(Mod.AttackDamagePercent);
         AbilityPowerPercent += Safe(Mod.AbilityPowerPercent);
         ArmorPercent += Safe(Mod.ArmorPercent);
+        CombatManaGainBonus += Safe(Mod.ManaGainPercent);
+        FinalStats.StartMana += Safe(Mod.StartMana);
         FinalStats.MaxHealth += Safe(Mod.MaxHealth);
         FinalStats.AttackDamage += Safe(Mod.AttackDamage);
         FinalStats.AbilityPower += Safe(Mod.AbilityPower);
@@ -226,6 +239,9 @@ void ABattleUnitBase::RecalculateStats()
     CurrentHP = bIsDead ? 0.f : FinalStats.MaxHealth * HealthRatio;
     RefreshAttackSpeed();
     CurrentMana = UsesMana() ? FMath::Clamp(Positive(CurrentMana), 0.f, FinalStats.MaxMana) : 0.f;
+    // 준비 중 장착/해제는 시작 마나 미리보기도 갱신한다. 전투 중에는 즉시 마나를 지급하지 않는다.
+    if (!bInCombat && !bCombatStartedForRound)
+        CurrentMana = UsesMana() ? FinalStats.StartMana : 0.f;
     OnStatsChanged.Broadcast(this); OnHealthChanged.Broadcast(this); OnManaChanged.Broadcast(this);
 }
 
@@ -495,6 +511,8 @@ bool ABattleUnitBase::SetPreparationPlacement(FTransform Transform, ABoardTile* 
     }
     // 스케일은 모델 보정에 쓰지 않는다. 준비 위치는 논리적 Transform으로 보관한다.
     Transform.SetScale3D(FVector::OneVector);
+    // 팀과 보드/대기석 구분 없이 준비 중에는 현재 메인 카메라 쪽을 바라본다.
+    Transform.SetRotation(PreparationRotation.Quaternion());
     SetActorTransform(Transform);
     Placement = NewPlacement; bIsDeployed = NewPlacement == EUnitPlacement::Board;
     PreparationTransform = Transform; PreparationTile = Tile; PreparationPlacement = NewPlacement;
@@ -588,6 +606,7 @@ bool ABattleUnitBase::ResetForRound()
     SetActorHiddenInGame(false); ChangeAction(EUnitActionState::Idle);
     CurrentHP = FinalStats.MaxHealth;
     RecalculateStats(); CurrentHP = FinalStats.MaxHealth; CurrentMana = UsesMana() ? FinalStats.StartMana : 0.f;
+    PreparationTransform.SetRotation(PreparationRotation.Quaternion());
     SetActorTransform(PreparationTransform);
     Placement = PreparationPlacement; bIsDeployed = Placement == EUnitPlacement::Board;
     if (bIsDeployed)
@@ -736,7 +755,8 @@ bool ABattleUnitBase::AddModifier(FName EffectId, const FUnitStatModifier& Modif
         || Modifier.AttackSpeedSlow != 0.f || Modifier.DamageIncrease != 0.f || Modifier.DamageReduction != 0.f
         || Modifier.ArmorReduction != 0.f || Modifier.MagicResistanceReduction != 0.f
         || Modifier.AttackDamageReduction != 0.f || Modifier.AbilityPowerReduction != 0.f
-        || Modifier.CriticalChance != 0.f || Modifier.CriticalMultiplier != 0.f || Modifier.bBlockManaGain;
+        || Modifier.CriticalChance != 0.f || Modifier.CriticalMultiplier != 0.f || Modifier.bBlockManaGain
+        || Modifier.ManaGainPercent != 0.f || Modifier.StartMana != 0.f;
     if (StunMultiplier != 1.f && Modifier.bStun && bHasOtherStats)
     {
         FUnitStatModifier StatsOnly = Modifier; StatsOnly.bStun = false;
@@ -924,7 +944,13 @@ FUnitDamageResult ABattleUnitBase::ReceiveDamage(const FUnitDamageRequest& Reque
     if (bAttackSpeedChanged) OnStatsChanged.Broadcast(this);
     OnHealthChanged.Broadcast(this);
     // 보호막 피해도 피격 마나에 포함한다. 과잉 살상 피해는 포함하지 않는다.
-    if (IsAlive()) GainMana(FMath::Min((Result.ShieldDamage + Result.HealthDamage) * Positive(CombatPolicy.DamageTakenManaRatio), Positive(CombatPolicy.DamageTakenManaCapPerHit)));
+    if (IsAlive())
+    {
+        // 기본 피격 마나의 1회 상한을 적용한 뒤 장비 증가율을 곱한다. 20 상한에 +10%면 최대 22.
+        const float BaseMana = FMath::Min((Result.ShieldDamage + Result.HealthDamage)
+            * Positive(CombatPolicy.DamageTakenManaRatio), Positive(CombatPolicy.DamageTakenManaCapPerHit));
+        GainMana(BaseMana * FMath::Max(0.f, 1.f + Safe(CombatManaGainBonus)));
+    }
     OnDamageReceived.Broadcast(this, Request, Result);
     if (bInCombat && IsAlive()) DispatchTrigger(EUnitTrigger::DamageTaken, Request, Result);
     ABattleUnitBase* Source = Request.Attacker;
@@ -1450,7 +1476,8 @@ void ABattleUnitBase::ReportBasicHit(ABattleUnitBase* Target, const FUnitDamageR
     ResolveArmedBasicAttack(Request, Result);
     if (!Result.bApplied || !bInCombat || !IsAlive()) return;
     ++BasicHitCount;
-    GainMana(10.f); // 명세의 기본 공격 적중 마나. 원거리도 도착 시에만 한 번 지급한다.
+    // 기본 적중 마나 10에 증가율 합계를 적용한다. 원거리도 도착 시에만 한 번 지급한다.
+    GainMana(10.f * FMath::Max(0.f, 1.f + Safe(CombatManaGainBonus)));
     for (UUnitSkillBase* Skill : SkillInstances) Skill->OnBasicAttackLanded(Result);
     FUnitDamageRequest Context = Request; Context.Victim = Target;
     DispatchTrigger(EUnitTrigger::BasicAttackHit, Context, Result);
@@ -2687,7 +2714,7 @@ bool FUnitActionFacingTest::RunTest(const FString& Parameters)
     {
         FFixture F; FTestUnitData Data = FFixture::UnitData(); Data.TestSkills.Empty();
         Data.BasicAttack.Delivery = Delivery;
-        Data.Visuals.VisualTransform.SetRotation(FRotator(0.f, -90.f, 0.f).Quaternion());
+        Data.Visuals.VisualTransform.SetRotation(FQuat::Identity);
         ABattleUnitBase* A = F.Spawn(TEXT("Attacker"), Data, EBattleTeam::Player, 0);
         ABattleUnitBase* B = F.Spawn(TEXT("First"), Data, EBattleTeam::Enemy, 1);
         ABattleUnitBase* C = F.Spawn(TEXT("Second"), Data, EBattleTeam::Enemy, 2);
@@ -2696,13 +2723,12 @@ bool FUnitActionFacingTest::RunTest(const FString& Parameters)
         A->StartCombat(); B->StartCombat(); C->StartCombat();
         A->SetActorRotation(FRotator(0, 180, 0)); A->CurrentTarget = B;
         TestTrue(TEXT("Attack starts without prior movement"), A->TryBasicAttack());
-        TestTrue(TEXT("Attack faces target horizontally"), A->GetActorForwardVector().Equals((B->GetActorLocation() - A->GetActorLocation()).GetSafeNormal2D(), 0.001f));
-        TestTrue(TEXT("DT model forward correction stays applied"), A->VisualRoot->GetRelativeRotation().Equals(FRotator(0, -90, 0)));
-        TestTrue(TEXT("Model +Y forward matches target after correction"), A->VisualRoot->GetRightVector().Equals(A->GetActorForwardVector(), 0.001f));
+        TestTrue(TEXT("Model faces target horizontally"), A->VisualRoot->GetRightVector().Equals((B->GetActorLocation() - A->GetActorLocation()).GetSafeNormal2D(), 0.001f));
+        TestTrue(TEXT("DT visual rotation stays zero"), A->VisualRoot->GetRelativeRotation().IsNearlyZero());
         A->FinishAction(A->ActiveActionId); A->CurrentTarget = nullptr; A->Tick(2.f);
         A->CurrentTarget = C;
         TestTrue(TEXT("Next attack can start after retarget"), A->TryBasicAttack());
-        TestTrue(TEXT("Next attack turns toward new target"), A->GetActorForwardVector().Equals((C->GetActorLocation() - A->GetActorLocation()).GetSafeNormal2D(), 0.001f));
+        TestTrue(TEXT("Next attack turns toward new target"), A->VisualRoot->GetRightVector().Equals((C->GetActorLocation() - A->GetActorLocation()).GetSafeNormal2D(), 0.001f));
         const FRotator Facing = A->GetActorRotation(); A->CurrentTarget = B;
         TestFalse(TEXT("Active attack rejects another start"), A->TryBasicAttack());
         TestTrue(TEXT("Rejected start does not turn active attack"), A->GetActorRotation().Equals(Facing));
@@ -2721,8 +2747,37 @@ bool FUnitActionFacingTest::RunTest(const FString& Parameters)
         A->CurrentTarget = B; A->GainMana(100.f); A->SetActorRotation(FRotator(0, -35, 0));
         TestTrue(TEXT("Skill starts"), A->TryCastSkill());
         if (Target == EUnitSkillTarget::CurrentEnemy || Target == EUnitSkillTarget::ClosestEnemy)
-            TestTrue(TEXT("Enemy skill faces chosen target without pitching"), A->GetActorForwardVector().Equals((B->GetActorLocation() - A->GetActorLocation()).GetSafeNormal2D(), 0.001f));
+            TestTrue(TEXT("Enemy skill faces chosen target without pitching"), A->VisualRoot->GetRightVector().Equals((B->GetActorLocation() - A->GetActorLocation()).GetSafeNormal2D(), 0.001f));
         else TestTrue(TEXT("Self and ally skills preserve facing"), A->GetActorRotation().Equals(FRotator(0, -35, 0)));
+    }
+    return true;
+}
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FUnitPreparationFacingTest, "ProjectA.Unit.PreparationFacing",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FUnitPreparationFacingTest::RunTest(const FString& Parameters)
+{
+    using namespace UnitCombatTests;
+    FFixture F;
+    FTestUnitData Data = FFixture::UnitData(); Data.TestSkills.Empty();
+    for (EBattleTeam Team : {EBattleTeam::Player, EBattleTeam::Enemy})
+    {
+        ABattleUnitBase* Unit = F.Spawn(Team == EBattleTeam::Player ? TEXT("Ally") : TEXT("Enemy"), Data, Team, 0);
+        if (!Unit) return false;
+        TestTrue(TEXT("Board placement faces camera for both teams"), Unit->GetActorRotation().Equals(FRotator(0, 180, 0)));
+        TestTrue(TEXT("Visual rotation stays zero"), Unit->VisualRoot->GetRelativeRotation().IsNearlyZero());
+        Unit->StartCombat();
+        Unit->SetActorRotation(FRotator(0, 35, 0));
+        Unit->StopCombat();
+        TestTrue(TEXT("Round reset succeeds"), Unit->ResetForRound());
+        TestTrue(TEXT("Round reset restores camera facing"), Unit->GetActorRotation().Equals(FRotator(0, 180, 0)));
+        if (Team == EBattleTeam::Player)
+        {
+            Unit->SetActorRotation(FRotator(0, 55, 0));
+            TestTrue(TEXT("Bench placement succeeds"), Unit->SetWaitingPlacement(FVector(0, -500, 1)));
+            TestTrue(TEXT("Bench faces camera"), Unit->GetActorRotation().Equals(FRotator(0, 180, 0)));
+            Unit->Tick(0.1f);
+            TestTrue(TEXT("Bench keeps camera facing"), Unit->GetActorRotation().Equals(FRotator(0, 180, 0)));
+        }
     }
     return true;
 }

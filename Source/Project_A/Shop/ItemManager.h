@@ -27,6 +27,9 @@ public:
     UFUNCTION(BlueprintPure, Category="Items")
     bool GetItem(FName Id, FItemDefinition& Item) const;
 
+    // 랜덤 보상은 처치 드롭 체크와 무관하게 유효한 DT_Items 전체 행을 사용한다.
+    TArray<FName> GetRandomRewardCandidates() const;
+
 private:
     friend class AShopTransactionManager;
 

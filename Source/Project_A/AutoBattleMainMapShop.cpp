@@ -65,6 +65,12 @@ bool AAutoBattleGameMode::InitializeMainMapShop()
                 Shop.Catalog.Add({Row, FText::FromName(Row), Unit->Cost});
         }
     }
+    // 기존 카탈로그의 가격/후보 구성은 보존하고 표시 이름만 DT_Units에서 가져온다.
+    for (FShopOffer& Offer : Shop.Catalog)
+    {
+        if (const FUnitDefinition* Unit = Table->FindRow<FUnitDefinition>(Offer.UnitId, TEXT("Shop display name"), false))
+            Offer.Label = Unit->DisplayName.IsEmpty() ? FText::FromName(Offer.UnitId) : Unit->DisplayName;
+    }
     if (Shop.StartingGold == 0) Shop.StartingGold = MainMapShopStartingGold;
     if (Shop.Catalog.IsEmpty()) return false;
     if (RoundsTable.IsNull() && Shop.RewardPool.IsEmpty())
@@ -79,20 +85,47 @@ bool AAutoBattleGameMode::InitializeMainMapShop()
     if (RoundsTable.IsNull() && Shop.RewardPool.Num() < AShopManager::RewardSlots) return false;
     if (!RoundsTable.IsNull())
     {
+        Shop.UnifiedRoundOdds.Reset();
+        const TArray<FName> RandomItemIds = Transactions->Items->GetRandomRewardCandidates();
         for (int32 Round = 1; Round <= 5; ++Round)
         {
             const auto* Definition = GetUnifiedRound(Round);
             TSet<FString> Unique;
             if (!Definition) return false;
+            if (!Definition->ShopCostWeights.IsEmpty())
+            {
+                bool bValidOdds = Definition->ShopCostWeights.Num() == 5;
+                bool bHasEligibleCost = false;
+                for (int32 Index = 0; Index < Definition->ShopCostWeights.Num(); ++Index)
+                {
+                    const float Weight = Definition->ShopCostWeights[Index];
+                    bValidOdds &= FMath::IsFinite(Weight) && Weight >= 0.f;
+                    if (FMath::IsFinite(Weight) && Weight > 0.f)
+                        bHasEligibleCost |= Shop.Catalog.ContainsByPredicate([Index](const FShopOffer& Offer)
+                        { return Offer.Cost == Index + 1; });
+                }
+                if (!bValidOdds || !bHasEligibleCost)
+                {
+                    ManagedError(FString::Printf(TEXT("Unified round R%d ShopCostWeights needs five non-negative finite weights and an available unit cost with positive weight."), Round));
+                    return false;
+                }
+                FShopRoundOdds Odds;
+                Odds.CostWeights = Definition->ShopCostWeights;
+                Shop.UnifiedRoundOdds.Add(Round, MoveTemp(Odds));
+            }
             for (const FRewardOffer& Reward : Definition->RewardPool)
             {
                 if (Reward.Weight == 0.f) continue;
-                FItemDefinition Item;
-                const bool Valid = Reward.Kind == ERewardKind::Unit
-                    ? Reward.Stars >= 1 && Reward.Stars <= 2 && !Shop.GetOfferDefinition(Reward.DefinitionId).UnitId.IsNone()
-                    : Reward.Kind == ERewardKind::Gold ? Reward.GoldAmount > 0 : Transactions->Items->GetItem(Reward.DefinitionId, Item);
+                const bool Valid = Shop.IsRewardValid(Reward, [Transactions](FName Id)
+                {
+                    FItemDefinition Item;
+                    return Transactions->Items->GetItem(Id, Item);
+                }, RandomItemIds);
                 const FString Key = FString::Printf(TEXT("%d:%s:%d"), static_cast<int32>(Reward.Kind),
-                    Reward.Kind == ERewardKind::Gold ? TEXT("Gold") : *Reward.DefinitionId.ToString(), Reward.Kind == ERewardKind::Unit ? Reward.Stars
+                    Reward.Kind == ERewardKind::RandomUnit ? *FString::Printf(TEXT("Cost%d"), Reward.UnitCost)
+                        : Reward.Kind == ERewardKind::RandomItem ? TEXT("RandomItem")
+                        : Reward.Kind == ERewardKind::Gold ? TEXT("Gold") : *Reward.DefinitionId.ToString(),
+                    (Reward.Kind == ERewardKind::Unit || Reward.Kind == ERewardKind::RandomUnit) ? Reward.Stars
                         : Reward.Kind == ERewardKind::Gold ? Reward.GoldAmount : 0);
                 if (!Valid || !FMath::IsFinite(Reward.Weight) || Reward.Weight <= 0.f || Unique.Contains(Key))
                 {

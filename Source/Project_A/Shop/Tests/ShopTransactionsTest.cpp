@@ -335,6 +335,88 @@ bool FShopTransactionsTest::RunTest(const FString& Parameters)
     TestEqual(TEXT("Full bench without an immediate merge blocks purchase"), Transactions->RequestBuy(2, FullBenchRevision), ETransactionResult::NoSpace);
     TestEqual(TEXT("Blocked purchase keeps gold"), Shop->GetGold(), 18);
     TestEqual(TEXT("Blocked purchase keeps offer"), Shop->GetOffers()[2].UnitId, UnitType);
+
+    // 통합 라운드 확률은 기존 Odds보다 우선하며 잠금 해제 후 리롤에도 같은 라운드를 적용한다.
+    if (!TestTrue(TEXT("Fresh match for unified odds and random rewards"), StartMatch(20))) return false;
+    FShopRoundOdds OnlyTwoCost; OnlyTwoCost.CostWeights = {0, 1, 0, 0, 0};
+    FShopRoundOdds OnlyOneCost; OnlyOneCost.CostWeights = {1, 0, 0, 0, 0};
+    Shop->UnifiedRoundOdds.Add(1, OnlyTwoCost);
+    Shop->UnifiedRoundOdds.Add(2, OnlyOneCost);
+    TestTrue(TEXT("Unified odds preparation"), Prepare(1, 2));
+    for (const FShopOffer& Offer : Shop->GetOffers())
+        TestEqual(TEXT("DT odds override legacy odds"), Offer.UnitId, OtherType);
+    TestEqual(TEXT("Reroll uses unified odds"), Transactions->RequestReroll(), ETransactionResult::Success);
+    for (const FShopOffer& Offer : Shop->GetOffers())
+        TestEqual(TEXT("Rerolled cost stays in configured tier"), Offer.Cost, 2);
+    Transactions->RequestShopLock(true);
+    TestTrue(TEXT("Locked shop advances round"), Prepare(2, 2));
+    for (const FShopOffer& Offer : Shop->GetOffers())
+        TestEqual(TEXT("Lock preserves previous offers"), Offer.Cost, 2);
+    Transactions->RequestShopLock(false);
+    TestEqual(TEXT("Unlock then reroll"), Transactions->RequestReroll(), ETransactionResult::Success);
+    for (const FShopOffer& Offer : Shop->GetOffers())
+        TestEqual(TEXT("New round odds applied"), Offer.Cost, 1);
+
+    Shop->RewardPool = {
+        { ERewardKind::RandomUnit, NAME_None, 1, 1, 0, 2 },
+        { ERewardKind::RandomUnit, NAME_None, 2, 1, 0, 1 },
+        { ERewardKind::Item, ItemId, 1, 1 },
+        { ERewardKind::Gold, NAME_None, 1, 1, 10 }
+    };
+    FRewardOffer MissingCost = Shop->RewardPool[0]; MissingCost.UnitCost = 5;
+    TestFalse(TEXT("Random reward requires an available cost tier"),
+        Shop->IsRewardValid(MissingCost, [](FName) { return false; }));
+    Mode->Match = { EShopPhase::RewardSelection, 2, 2 };
+    if (!TestTrue(TEXT("Random rewards open without a DefinitionId"), Transactions->OpenRewards())) return false;
+    const TArray<FRewardOffer> RandomRewards = Shop->GetRewards();
+    int32 RandomTwoStarSlot = INDEX_NONE;
+    for (int32 Slot = 0; Slot < RandomRewards.Num(); ++Slot)
+    {
+        const FRewardOffer& Reward = RandomRewards[Slot];
+        if (Reward.Kind != ERewardKind::RandomUnit) continue;
+        TestEqual(TEXT("Random unit matches requested cost"), Shop->GetOfferDefinition(Reward.DefinitionId).Cost, Reward.UnitCost);
+        if (Reward.Stars == 2) RandomTwoStarSlot = Slot;
+    }
+    if (!TestTrue(TEXT("Two-star random card exists"), RandomTwoStarSlot != INDEX_NONE)) return false;
+    TestFalse(TEXT("Opening an existing reward does not reroll it"), Transactions->OpenRewards());
+    TestEqual(TEXT("Resolved random unit stays fixed"), Shop->GetRewards()[RandomTwoStarSlot].DefinitionId,
+        RandomRewards[RandomTwoStarSlot].DefinitionId);
+    const int32 RandomRevision = Shop->GetRewardRevision();
+    TestEqual(TEXT("Receive random two-star unit"), Transactions->RequestReward(RandomTwoStarSlot, RandomRevision), ETransactionResult::Success);
+    const TArray<FRosterUnit> GrantedUnits = Roster->GetUnits();
+    if (!TestEqual(TEXT("One random reward unit granted"), GrantedUnits.Num(), 1)) return false;
+    TestEqual(TEXT("Random reward preserves requested stars"), GrantedUnits[0].Stars, 2);
+    TestEqual(TEXT("Random reward uses selected definition"), GrantedUnits[0].UnitId, UnitType);
+    TestEqual(TEXT("Random reward cannot be received twice"), Transactions->RequestReward(RandomTwoStarSlot, RandomRevision), ETransactionResult::InvalidSelection);
+
+    if (!TestTrue(TEXT("Fresh match for random item rewards"), StartMatch(20))) return false;
+    // 처치 드롭에서 제외한 아이템도 DT 전체 랜덤 보상에는 포함한다.
+    FItemDefinition RewardOnlyItem; RewardOnlyItem.bCanDropOnKill = false;
+    Items->ItemDefinitions->AddRow(ItemId, RewardOnlyItem);
+    TestTrue(TEXT("Random reward ignores kill-drop flag"), Items->GetRandomRewardCandidates().Contains(ItemId));
+    Shop->RewardPool = {
+        { ERewardKind::RandomItem, NAME_None, 1, 1 },
+        { ERewardKind::Unit, UnitType, 1, 1 },
+        { ERewardKind::Unit, OtherType, 2, 1 },
+        { ERewardKind::Gold, NAME_None, 1, 1, 10 }
+    };
+    TestFalse(TEXT("Random item needs a nonempty valid item pool"),
+        Shop->IsRewardValid(Shop->RewardPool[0], [](FName) { return false; }));
+    TestTrue(TEXT("Prepare random item match"), Prepare(1, 2));
+    Mode->Match = { EShopPhase::RewardSelection, 1, 2 };
+    if (!TestTrue(TEXT("Open random item without DefinitionId"), Transactions->OpenRewards())) return false;
+    const TArray<FRewardOffer> ItemRewards = Shop->GetRewards();
+    const int32 RandomItemSlot = ItemRewards.IndexOfByPredicate([](const FRewardOffer& Reward)
+        { return Reward.Kind == ERewardKind::RandomItem; });
+    if (!TestTrue(TEXT("Random item card exists"), RandomItemSlot != INDEX_NONE)) return false;
+    TestEqual(TEXT("Random item resolves to a DT row"), ItemRewards[RandomItemSlot].DefinitionId, ItemId);
+    TestFalse(TEXT("Reopening does not reroll random item"), Transactions->OpenRewards());
+    TestEqual(TEXT("Random item result stays fixed"), Shop->GetRewards()[RandomItemSlot].DefinitionId, ItemId);
+    const int32 RandomItemRevision = Shop->GetRewardRevision();
+    TestEqual(TEXT("Receive random item"), Transactions->RequestReward(RandomItemSlot, RandomItemRevision), ETransactionResult::Success);
+    if (!TestEqual(TEXT("Random item grants exactly one inventory entry"), Items->GetInventory().Num(), 1)) return false;
+    TestEqual(TEXT("Inventory contains resolved item"), Items->GetInventory()[0], ItemId);
+    TestEqual(TEXT("Random item cannot be received twice"), Transactions->RequestReward(RandomItemSlot, RandomItemRevision), ETransactionResult::InvalidSelection);
     return true;
 }
 #endif

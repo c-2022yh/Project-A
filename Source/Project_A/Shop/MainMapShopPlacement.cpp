@@ -214,6 +214,11 @@ bool UMainMapShopPlacement::ApplyUnitChanges_Implementation(const TArray<FRoster
                 Edit.Modifier.AttackDamagePercent += Item.Bonuses.AttackDamagePercent;
                 Edit.Modifier.AbilityPowerPercent += Item.Bonuses.AbilityPowerPercent;
                 Edit.Modifier.ArmorPercent += Item.Bonuses.ArmorPercent;
+                Edit.Modifier.ManaGainPercent += Item.Bonuses.ManaGainPercent;
+                Edit.Modifier.MagicResistance += Item.Bonuses.MagicResistance;
+                Edit.Modifier.CriticalChance += Item.Bonuses.CriticalChance;
+                Edit.Modifier.CriticalMultiplier += Item.Bonuses.CriticalMultiplier;
+                Edit.Modifier.StartMana += Item.Bonuses.StartMana;
             }
         }
     }

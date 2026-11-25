@@ -1,8 +1,6 @@
 #include "AutoBattleHUD.h"
 #include "AutoBattleGameMode.h"
 #include "AutoBattlePlayerController.h"
-#include "BattleUnitBase.h"
-#include "Components/CapsuleComponent.h"
 #include "Engine/Canvas.h"
 #include "Kismet/GameplayStatics.h"
 
@@ -16,16 +14,14 @@ void AAutoBattleHUD::DrawHUD()
     const bool bShowingReward = Mode->GetShopMatchState_Implementation().Phase == EShopPhase::RewardSelection;
     // Preparation time and the start button are owned by WBP_BattleHUD.
     // Keep the remaining presentation until it is implemented in the widget.
-    if (Mode->CurrentPhase != EGamePhase::Preparation && !bShowingReward && !Mode->bShowingRoundClear
+    if (Mode->CurrentPhase != EGamePhase::Preparation && Mode->CurrentPhase != EGamePhase::Combat
+        && !bShowingReward && !Mode->bShowingRoundClear
         && !Mode->bManagedDefeated && !Mode->bManagedTestFinished)
     {
         DrawRect(FLinearColor(0.01f, 0.02f, 0.04f, 0.85f), 0, 0, Width, 72);
         FString Title;
         switch (Mode->CurrentPhase)
         {
-            case EGamePhase::Combat:
-                Title = FString::Printf(TEXT("COMBAT  %.0fs    Blue %d : Red %d"), Mode->ElapsedCombatTime,
-                    Mode->GetAliveTeamCount(EBattleTeam::Player), Mode->GetAliveTeamCount(EBattleTeam::Enemy)); break;
             case EGamePhase::Victory: Title = TEXT("VICTORY"); break;
             case EGamePhase::GameOver: Title = TEXT("DEFEAT"); break;
             default: Title = TEXT("ROUND CLEAR"); break;
@@ -49,24 +45,7 @@ void AAutoBattleHUD::DrawHUD()
         AddHitBox(FVector2D(Width - 150, ButtonY), FVector2D(130, 36), TEXT("Restart"), true);
     }
 
-    const AAutoBattlePlayerController* PC = Cast<AAutoBattlePlayerController>(PlayerOwner);
-    for (ABattleUnitBase* Unit : Mode->BattleUnits)
-    {
-        if (!IsValid(Unit) || !Unit->IsAlive()) continue;
-        const FVector Anchor = Unit->GetActorLocation() + FVector(0, 0, Unit->GetHealthBarHeight());
-        // Canvas 좌표에는 카메라 화면 바깥 검은 여백의 위치 보정이 포함되지 않는다.
-        // 이 HUD를 그릴 때 사용하는 시점으로 월드 위치를 화면 좌표로 변환한다.
-        const FVector Projected = Canvas->Project(Anchor);
-        if (Projected.Z <= 0 || Projected.X < 0 || Projected.X > Canvas->ClipX
-            || Projected.Y < 0 || Projected.Y > Canvas->ClipY) continue;
-        const FVector2D Screen(Projected.X, Projected.Y);
-        const FLinearColor Color = Unit->TeamType == EBattleTeam::Player ? FLinearColor(0.1f, 0.55f, 1) : FLinearColor(1, 0.2f, 0.15f);
-        DrawRect(FLinearColor::Black, Screen.X - 31, Screen.Y, 62, 9);
-        DrawRect(Color, Screen.X - 30, Screen.Y + 1, 60 * FMath::Clamp(Unit->CurrentHP / FMath::Max(1.0f, Unit->FinalStats.MaxHealth), 0.0f, 1.0f), 7);
-        const FString Label = PC && PC->SelectedUnit == Unit ? TEXT("SELECTED")
-            : Unit->TeamType == EBattleTeam::Player ? (Unit->bIsDeployed ? TEXT("ALLY") : TEXT("WAITING")) : TEXT("ENEMY");
-        DrawText(Label, PC && PC->SelectedUnit == Unit ? FLinearColor::Yellow : Color, Screen.X - 30, Screen.Y - 18, nullptr, 0.8f);
-    }
+    // 체력바와 장착 아이콘은 각 유닛의 UnitStatusWidget에서 표시한다.
 }
 void AAutoBattleHUD::NotifyHitBoxClick(FName BoxName)
 {

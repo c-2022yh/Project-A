@@ -528,7 +528,7 @@ bool FBoardContinuousApproachTest::RunTest(const FString& Parameters)
     if (!TestNotNull(TEXT("First step reserved"), FirstStep)) return false;
     const FVector FirstDirection = (FirstStep->GetSurfaceLocation() - Attacker->GetActorLocation()).GetSafeNormal2D();
     TestTrue(TEXT("Unit faces the step as soon as it is reserved"),
-        Attacker->GetActorForwardVector().Equals(FirstDirection, 0.01f));
+        Attacker->GetActorRightVector().Equals(FirstDirection, 0.01f));
 
     Attacker->Tick(1.f);
     TestTrue(TEXT("Unit arrives at the first tile"), Attacker->CurrentTile == FirstStep);

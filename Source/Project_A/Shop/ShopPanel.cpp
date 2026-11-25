@@ -170,6 +170,9 @@ void UShopPanel::Draw(AHUD* HUD, UCanvas* Canvas)
     const FIntRect ViewRect = Projection.GetConstrainedViewRect();
     ViewOrigin = FVector2D(ViewRect.Min.X, ViewRect.Min.Y);
     ViewSize = FVector2D(ViewRect.Width(), ViewRect.Height());
+    // 카메라 종횡비로 생긴 검은 여백까지 포함한 플레이어 화면 하단.
+    // 그리기/버튼 좌표는 기존 카메라 영역 기준을 유지하므로 원점만 보정한다.
+    ShopBottom = static_cast<float>(Projection.GetViewRect().Max.Y - ViewRect.Min.Y);
 
     ActiveHUD = HUD;
     Buttons.Reset();
@@ -221,8 +224,10 @@ void UShopPanel::DrawShop(AHUD& HUD, const AShopManager& Manager, const FShopMat
     const bool bCompact = ViewSize.X < 620 || ViewSize.Y < 410;
     const float Width = FMath::Min(700.0f, static_cast<float>(ViewSize.X) - 32.0f);
     const float X = (static_cast<float>(ViewSize.X) - Width) / 2;
-    const float Y = static_cast<float>(ViewSize.Y) - (bCompact ? 79.f : 160.f);
-    HUD.DrawRect(PanelBackground, X, Y, Width, bCompact ? 71.f : 94.f);
+    // 패널 높이만큼 올려 그려 하단 여백 없이 배치한다. 버튼도 같은 Y를 사용한다.
+    const float Height = bCompact ? 71.f : 94.f;
+    const float Y = ShopBottom - Height;
+    HUD.DrawRect(PanelBackground, X, Y, Width, Height);
     const FString ShopTitle = bCompact
         ? FString::Printf(TEXT("R%d | %dG | MAX %d"), Match.Round, Manager.GetGold(), Match.DeploymentLimit)
         : FString::Printf(TEXT("R%d   |   %d GOLD   |   LIMIT %d"), Match.Round, Manager.GetGold(), Match.DeploymentLimit);
@@ -257,7 +262,8 @@ void UShopPanel::DrawItemsAndUnitActions(AHUD& HUD, const AShopTransactionManage
     const bool bManageBench = bManageBoard || Phase == EShopPhase::Combat;
     const bool bCompact = ViewSize.X < 620 || ViewSize.Y < 410;
     const bool bReward = Phase == EShopPhase::RewardSelection;
-    const float Y = static_cast<float>(ViewSize.Y) - (bReward ? 8.f : bCompact ? 79.f : 160.f);
+    const float Y = bReward ? static_cast<float>(ViewSize.Y) - 8.f
+        : ShopBottom - (bCompact ? 71.f : 94.f);
     const float HeaderY = bReward ? FMath::Max(100.f, static_cast<float>(ViewSize.Y) - 110.f) : 86.f;
     const float ActionY = HeaderY + 23.f;
 
@@ -328,15 +334,27 @@ void UShopPanel::DrawRewards(AHUD& HUD, const AShopTransactionManager& Manager)
     {
         const FRewardOffer& Reward = Rewards[Index];
         const bool bItem = Reward.Kind == ERewardKind::Item;
+        const bool bRandomUnit = Reward.Kind == ERewardKind::RandomUnit;
         const FString Label = Reward.Kind == ERewardKind::Gold ? FString::Printf(TEXT("+%d G"), Reward.GoldAmount)
+            : Reward.Kind == ERewardKind::RandomItem ? TEXT("랜덤 아이템")
             : bItem ? ItemLabel(*Manager.Items, Reward.DefinitionId)
+            : bRandomUnit ? FString::Printf(TEXT("랜덤 %d코스트 %d성 유닛"), Reward.UnitCost, Reward.Stars)
             : FString::Printf(TEXT("%s %d*"), *UnitLabel(*Manager.Shop, Reward.DefinitionId), Reward.Stars);
         const float CardX = X + 10 + SlotWidth * Index;
         FButton Button { EAction::Reward, { CardX, Y + 36 + FeedbackHeight }, { SlotWidth - 4, bCompact ? 30.f : 42.f }, Index };
         Button.Revision = Manager.Shop->GetRewardRevision();
         FItemDefinition Item;
         const bool HasItem = bItem && Manager.Items->GetItem(Reward.DefinitionId, Item);
-        AddButton(HUD, HasItem ? TEXT("") : Label, Button);
+        AddButton(HUD, HasItem || bRandomUnit ? TEXT("") : Label, Button);
+        if (bRandomUnit)
+        {
+            // 성급/코스트/유닛 문구가 카드 폭 때문에 잘리지 않게 글자 크기를 맞춘다.
+            float TextWidth = 0.f, TextHeight = 0.f;
+            HUD.GetTextSize(Label, TextWidth, TextHeight);
+            const float Scale = FMath::Min(1.f, static_cast<float>(Button.Size.X - 12.f) / FMath::Max(1.f, TextWidth));
+            HUD.DrawText(Label, FLinearColor::White, Button.Position.X + 6.f,
+                Button.Position.Y + (Button.Size.Y - TextHeight * Scale) / 2.f, nullptr, Scale);
+        }
         if (HasItem)
         {
             DrawItemIcon(HUD, Item, Button.Position + FVector2D(3, 5), 20.f);
@@ -344,7 +362,8 @@ void UShopPanel::DrawRewards(AHUD& HUD, const AShopTransactionManager& Manager)
                 Button.Position.X + 26, Button.Position.Y + 9, nullptr, 0.8f);
         }
         const FString Detail = HasItem
-            ? Item.Description.ToString() : Reward.Kind == ERewardKind::Gold ? TEXT("Gold") : TEXT("Unit");
+            ? Item.Description.ToString() : Reward.Kind == ERewardKind::RandomItem ? TEXT("무작위 아이템 1개")
+            : Reward.Kind == ERewardKind::Gold ? TEXT("Gold") : TEXT("Unit");
         HUD.DrawText(Detail.Left(bCompact ? 13 : 24), Muted, CardX + 4,
             Y + (bCompact ? 70.f : 86.f) + FeedbackHeight, nullptr, 0.8f);
     }
