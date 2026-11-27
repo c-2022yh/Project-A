@@ -76,7 +76,6 @@ private:
     EShopPhase DisplayedPhase = EShopPhase::Inactive;
     int32 DisplayedRewardRevision = INDEX_NONE;
     bool bDirty = true;
-    bool bCompact = false;
     bool bItemDragging = false;
 
     UFUNCTION() void MarkDirty();

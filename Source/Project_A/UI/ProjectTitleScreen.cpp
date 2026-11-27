@@ -46,6 +46,7 @@ TSharedRef<SWidget> UProjectTitleScreen::RebuildWidget()
     if (WidgetTree && !WidgetTree->RootWidget)
     {
         auto* Canvas = WidgetTree->ConstructWidget<UCanvasPanel>();
+        Canvas->SetClipping(EWidgetClipping::ClipToBounds);
         WidgetTree->RootWidget = Canvas;
 
         auto* Tint = WidgetTree->ConstructWidget<UBorder>();

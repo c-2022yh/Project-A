@@ -9,6 +9,7 @@
 #include "Engine/LocalPlayer.h"
 #include "SceneView.h"
 #include "Engine/GameViewportClient.h"
+#include "Engine/UserInterfaceSettings.h"
 #include "GameFramework/HUD.h"
 #include "GameFramework/PlayerController.h"
 #include "EngineUtils.h"
@@ -100,16 +101,32 @@ void UShopPanel::CancelItemDrag()
             Mode->SetManagedDragState(false, false);
 }
 
+FVector2D UShopPanel::ToCanvasUnits(FVector2D ViewportPosition) const
+{
+    return (ViewportPosition - ViewOrigin) / CanvasScale;
+}
+
+void UShopPanel::DrawRect(AHUD& HUD, FLinearColor Color, float X, float Y, float Width, float Height) const
+{
+    HUD.DrawRect(Color, X * CanvasScale, Y * CanvasScale, Width * CanvasScale, Height * CanvasScale);
+}
+
+void UShopPanel::DrawText(AHUD& HUD, const FString& Text, FLinearColor Color, float X, float Y, float Scale) const
+{
+    HUD.DrawText(Text, Color, X * CanvasScale, Y * CanvasScale, nullptr, Scale * CanvasScale);
+}
+
 void UShopPanel::DrawItemIcon(AHUD& HUD, const FItemDefinition& Item, FVector2D Position, float Size)
 {
-    HUD.DrawRect(FLinearColor(0.65f, 0.48f, 0.18f), Position.X, Position.Y, Size, Size);
+    DrawRect(HUD, FLinearColor(0.65f, 0.48f, 0.18f), Position.X, Position.Y, Size, Size);
     if (Item.Icon)
-        HUD.DrawTexture(Item.Icon, Position.X + 1, Position.Y + 1, Size - 2, Size - 2, 0, 0, 1, 1);
+        HUD.DrawTexture(Item.Icon, Position.X + 1, Position.Y + 1, Size - 2, Size - 2, 0, 0, 1, 1,
+            FLinearColor::White, BLEND_Translucent, CanvasScale, true);
     else
     {
         // 아이콘 에셋을 지정하기 전에도 종류를 식별할 수 있는 임시 타일을 표시한다.
-        HUD.DrawRect(ButtonBackground, Position.X + 1, Position.Y + 1, Size - 2, Size - 2);
-        HUD.DrawText(Item.Label.ToString().Left(2), GoldColor, Position.X + 3, Position.Y + Size * 0.25f, nullptr, Size / 32.f);
+        DrawRect(HUD, ButtonBackground, Position.X + 1, Position.Y + 1, Size - 2, Size - 2);
+        DrawText(HUD, Item.Label.ToString().Left(2), GoldColor, Position.X + 3, Position.Y + Size * 0.25f, Size / 32.f);
     }
 }
 
@@ -117,16 +134,16 @@ void UShopPanel::DrawItemTooltip(AHUD& HUD, const FItemDefinition& Item, FVector
 {
     const float X = FMath::Clamp(static_cast<float>(Position.X), 0.f, FMath::Max(0.f, static_cast<float>(ViewSize.X) - 250.f));
     const float Y = FMath::Clamp(static_cast<float>(Position.Y), 0.f, FMath::Max(0.f, static_cast<float>(ViewSize.Y) - 72.f));
-    HUD.DrawRect(PanelBackground, X, Y, 250, 72);
-    HUD.DrawText(Item.Label.ToString(), GoldColor, X + 8, Y + 8);
-    HUD.DrawText(Item.Description.ToString(), FLinearColor::White, X + 8, Y + 32, nullptr, 0.8f);
+    DrawRect(HUD, PanelBackground, X, Y, 250, 72);
+    DrawText(HUD, Item.Label.ToString(), GoldColor, X + 8, Y + 8);
+    DrawText(HUD, Item.Description.ToString(), FLinearColor::White, X + 8, Y + 32, 0.8f);
 }
 
 void UShopPanel::AddButton(AHUD& HUD, const FString& Label, const FButton& Button, bool bEnabled, bool bSelected)
 {
     const FVector2D P = Button.Position;
     const FVector2D S = Button.Size;
-    HUD.DrawRect(!bEnabled ? PanelBackground : bSelected ? SelectedBackground : ButtonBackground, P.X, P.Y, S.X, S.Y);
+    DrawRect(HUD, !bEnabled ? PanelBackground : bSelected ? SelectedBackground : ButtonBackground, P.X, P.Y, S.X, S.Y);
     FString Text = Label;
     float TextWidth = 0;
     float TextHeight = 0;
@@ -141,9 +158,9 @@ void UShopPanel::AddButton(AHUD& HUD, const FString& Label, const FButton& Butto
         while (!Text.IsEmpty() && TextWidth > S.X - 12);
         Text += TEXT("...");
     }
-    HUD.DrawText(Text, bEnabled ? FLinearColor::White : Muted, P.X + 6, P.Y + (S.Y - TextHeight) / 2);
+    DrawText(HUD, Text, bEnabled ? FLinearColor::White : Muted, P.X + 6, P.Y + (S.Y - TextHeight) / 2);
     const int32 Index = Buttons.Add(Button);
-    HUD.AddHitBox(P, S, FName(TEXT("ShopPanel"), Index + 1), true, 10);
+    HUD.AddHitBox(P * CanvasScale, S * CanvasScale, FName(TEXT("ShopPanel"), Index + 1), true, 10);
     Buttons[Index].bEnabled = bEnabled;
 }
 
@@ -178,11 +195,12 @@ void UShopPanel::Draw(AHUD* HUD, UCanvas* Canvas)
     if (!LocalPlayer || !GameViewport || !GameViewport->Viewport
         || !LocalPlayer->GetProjectionData(GameViewport->Viewport, Projection)) return;
     const FIntRect ViewRect = Projection.GetConstrainedViewRect();
+    CanvasScale = GetDefault<UUserInterfaceSettings>()->GetDPIScaleBasedOnSize(GameViewport->Viewport->GetSizeXY());
     ViewOrigin = FVector2D(ViewRect.Min.X, ViewRect.Min.Y);
-    ViewSize = FVector2D(ViewRect.Width(), ViewRect.Height());
+    ViewSize = FVector2D(ViewRect.Width(), ViewRect.Height()) / CanvasScale;
     // 카메라 종횡비로 생긴 검은 여백까지 포함한 플레이어 화면 하단.
     // 그리기/버튼 좌표는 기존 카메라 영역 기준을 유지하므로 원점만 보정한다.
-    ShopBottom = static_cast<float>(Projection.GetViewRect().Max.Y - ViewRect.Min.Y);
+    ShopBottom = static_cast<float>(Projection.GetViewRect().Max.Y - ViewRect.Min.Y) / CanvasScale;
 
     ActiveHUD = HUD;
     Buttons.Reset();
@@ -206,7 +224,7 @@ void UShopPanel::Draw(AHUD* HUD, UCanvas* Canvas)
     float X, Y;
     if (PC->GetMousePosition(X, Y))
     {
-        const FVector2D LocalMouse = FVector2D(X, Y) - ViewOrigin;
+        const FVector2D LocalMouse = ToCanvasUnits(FVector2D(X, Y));
         FItemDefinition Item;
         if (!DraggingItem.IsNone() && Manager->Items->GetItem(DraggingItem, Item))
         {
@@ -215,9 +233,7 @@ void UShopPanel::Draw(AHUD* HUD, UCanvas* Canvas)
         }
         for (const FButton& Button : Buttons)
         {
-            const FVector2D Offset = LocalMouse - Button.Position;
-            if (Button.Action == EAction::Equip && Offset.X >= 0 && Offset.Y >= 0
-                && Offset.X < Button.Size.X && Offset.Y < Button.Size.Y && Manager->Items->GetItem(Button.Item, Item))
+            if (Button.Action == EAction::Equip && Button.Contains(LocalMouse) && Manager->Items->GetItem(Button.Item, Item))
             {
                 DrawItemTooltip(*HUD, Item, LocalMouse + FVector2D(12, 12));
                 return;
@@ -265,12 +281,12 @@ void UShopPanel::DrawShop(AHUD& HUD, const AShopManager& Manager, const FShopMat
     // 패널 높이만큼 올려 그려 하단 여백 없이 배치한다. 버튼도 같은 Y를 사용한다.
     const float Height = bCompact ? 71.f : 94.f;
     const float Y = ShopBottom - Height;
-    HUD.DrawRect(PanelBackground, X, Y, Width, Height);
+    DrawRect(HUD, PanelBackground, X, Y, Width, Height);
     const FString ShopTitle = bCompact
         ? FString::Printf(TEXT("R%d | %dG | MAX %d"), Match.Round, Manager.GetGold(), Match.DeploymentLimit)
         : FString::Printf(TEXT("R%d   |   %d GOLD   |   LIMIT %d"), Match.Round, Manager.GetGold(), Match.DeploymentLimit);
-    HUD.DrawText(ShopTitle, GoldColor, X + 12, Y + 12);
-    if (!Feedback.IsEmpty()) HUD.DrawText(Feedback, Muted, X + 12, Y - 22);
+    DrawText(HUD, ShopTitle, GoldColor, X + 12, Y + 12);
+    if (!Feedback.IsEmpty()) DrawText(HUD, Feedback, Muted, X + 12, Y - 22);
 
     const bool bTrade = Match.CanTrade();
     AddButton(HUD, TEXT("Reroll  2G"), { EAction::Reroll, { X + Width - 206, Y + 7 }, { 94, 27 } }, bTrade);
@@ -305,7 +321,7 @@ void UShopPanel::DrawItemsAndUnitActions(AHUD& HUD, const AShopTransactionManage
     const float HeaderY = bReward ? FMath::Max(100.f, static_cast<float>(ViewSize.Y) - 110.f) : 86.f;
     const float ActionY = HeaderY + 23.f;
 
-    HUD.DrawText(TEXT("ITEMS"), GoldColor, 14, HeaderY);
+    DrawText(HUD, TEXT("ITEMS"), GoldColor, 14, HeaderY);
     const TArray<FName> Inventory = Items.GetInventory();
     const int32 ItemRows = FMath::Max(1, FMath::FloorToInt((Y - ActionY - 33.f) / 40.f));
     const int32 PageSize = ItemRows * 2;
@@ -330,7 +346,7 @@ void UShopPanel::DrawItemsAndUnitActions(AHUD& HUD, const AShopTransactionManage
     const float X = static_cast<float>(ViewSize.X) - 160;
     FRosterUnit Unit;
     if (!Roster.GetUnit(Selected, Unit)) return;
-    HUD.DrawText(FString::Printf(TEXT("%s %d*"), *UnitLabel(*Manager.Shop, Unit.UnitId), Unit.Stars), GoldColor, X, HeaderY);
+    DrawText(HUD, FString::Printf(TEXT("%s %d*"), *UnitLabel(*Manager.Shop, Unit.UnitId), Unit.Stars), GoldColor, X, HeaderY);
     AddButton(HUD, TEXT("Sell"), { EAction::Sell, { X, ActionY }, { 70, 26 }, 0, Selected },
         bManageBoard || (bManageBench && !bSelectedBoardUnit));
     TArray<FName> Equipment;
@@ -360,14 +376,14 @@ void UShopPanel::DrawRewards(AHUD& HUD, const AShopTransactionManager& Manager)
     const float X = (static_cast<float>(ViewSize.X) - Width) / 2;
     const float Y = bCompact ? 12.f : static_cast<float>(ViewSize.Y) * 0.22f;
     const float SlotWidth = (Width - 24) / AShopManager::RewardSlots;
-    HUD.DrawRect(PanelBackground, X, Y, Width, (bCompact ? 91.f : 121.f) + FeedbackHeight);
+    DrawRect(HUD, PanelBackground, X, Y, Width, (bCompact ? 91.f : 121.f) + FeedbackHeight);
     const FShopMatchState Match = Manager.GetMatchState();
     const TCHAR* Outcome = Match.bRoundCleared ? TEXT("CLEAR") : TEXT("COMPLETE");
-    HUD.DrawText(FString::Printf(TEXT("R%d %s +%dG | CHOOSE ONE REWARD"),
+    DrawText(HUD, FString::Printf(TEXT("R%d %s +%dG | CHOOSE ONE REWARD"),
         Match.Round, Outcome, Match.ClearGoldAwarded), GoldColor, X + 10, Y + 10);
     for (int32 Line = 0; Line < FeedbackLines.Num(); ++Line)
-        HUD.DrawText(FeedbackLines[Line], FLinearColor(1.f, 0.55f, 0.4f),
-            X + 10, Y + 31.f + Line * 16.f, nullptr, 0.8f);
+        DrawText(HUD, FeedbackLines[Line], FLinearColor(1.f, 0.55f, 0.4f),
+            X + 10, Y + 31.f + Line * 16.f, 0.8f);
     for (int32 Index = 0; Index < Rewards.Num(); ++Index)
     {
         const FRewardOffer& Reward = Rewards[Index];
@@ -390,20 +406,20 @@ void UShopPanel::DrawRewards(AHUD& HUD, const AShopTransactionManager& Manager)
             float TextWidth = 0.f, TextHeight = 0.f;
             HUD.GetTextSize(Label, TextWidth, TextHeight);
             const float Scale = FMath::Min(1.f, static_cast<float>(Button.Size.X - 12.f) / FMath::Max(1.f, TextWidth));
-            HUD.DrawText(Label, FLinearColor::White, Button.Position.X + 6.f,
-                Button.Position.Y + (Button.Size.Y - TextHeight * Scale) / 2.f, nullptr, Scale);
+            DrawText(HUD, Label, FLinearColor::White, Button.Position.X + 6.f,
+                Button.Position.Y + (Button.Size.Y - TextHeight * Scale) / 2.f, Scale);
         }
         if (HasItem)
         {
             DrawItemIcon(HUD, Item, Button.Position + FVector2D(3, 5), 20.f);
-            HUD.DrawText(Label.Left(bCompact ? 7 : 14), FLinearColor::White,
-                Button.Position.X + 26, Button.Position.Y + 9, nullptr, 0.8f);
+            DrawText(HUD, Label.Left(bCompact ? 7 : 14), FLinearColor::White,
+                Button.Position.X + 26, Button.Position.Y + 9, 0.8f);
         }
         const FString Detail = HasItem
             ? Item.Description.ToString() : Reward.Kind == ERewardKind::RandomItem ? TEXT("무작위 아이템 1개")
             : Reward.Kind == ERewardKind::Gold ? TEXT("Gold") : TEXT("Unit");
-        HUD.DrawText(Detail.Left(bCompact ? 13 : 24), Muted, CardX + 4,
-            Y + (bCompact ? 70.f : 86.f) + FeedbackHeight, nullptr, 0.8f);
+        DrawText(HUD, Detail.Left(bCompact ? 13 : 24), Muted, CardX + 4,
+            Y + (bCompact ? 70.f : 86.f) + FeedbackHeight, 0.8f);
     }
 }
 
@@ -415,14 +431,14 @@ void UShopPanel::DrawProfile(AHUD& HUD, const AShopTransactionManager& Manager, 
     const bool bHasStats = Manager.Roster->GetProfile(Id, Profile);
     const float X = FMath::Clamp(Position.X, 8.0, ViewSize.X - 248.0);
     const float Y = FMath::Max(8.0, Position.Y);
-    HUD.DrawRect(PanelBackground, X, Y, 240, 100);
-    HUD.DrawText(FString::Printf(TEXT("%s  %d*"), *UnitLabel(*Manager.Shop, Unit.UnitId), Unit.Stars),
+    DrawRect(HUD, PanelBackground, X, Y, 240, 100);
+    DrawText(HUD, FString::Printf(TEXT("%s  %d*"), *UnitLabel(*Manager.Shop, Unit.UnitId), Unit.Stars),
         GoldColor, X + 8, Y + 6);
     if (bHasStats)
     {
-        HUD.DrawText(FString::Printf(TEXT("HP %.0f   AD %.0f   AP %.0f"), Profile.MaxHP, Profile.AttackDamage, Profile.AbilityPower),
+        DrawText(HUD, FString::Printf(TEXT("HP %.0f   AD %.0f   AP %.0f"), Profile.MaxHP, Profile.AttackDamage, Profile.AbilityPower),
             FLinearColor::White, X + 8, Y + 26);
-        HUD.DrawText(FString::Printf(TEXT("Armor %.0f   AS %.2f   MP %.0f"), Profile.Armor, Profile.AttackSpeed, Profile.MaxMP),
+        DrawText(HUD, FString::Printf(TEXT("Armor %.0f   AS %.2f   MP %.0f"), Profile.Armor, Profile.AttackSpeed, Profile.MaxMP),
             FLinearColor::White, X + 8, Y + 44);
     }
     TArray<FString> Items;
@@ -435,18 +451,17 @@ void UShopPanel::DrawProfile(AHUD& HUD, const AShopTransactionManager& Manager, 
         Items.Add(ItemLabel(*Manager.Items, Item));
         if (Equipment.Num() == 1 && !Definition.Description.IsEmpty()) Items.Add(Definition.Description.ToString());
     }
-    HUD.DrawText(FString::Join(Items, TEXT(" / ")).Left(40), Muted, X + 8, Y + 65, nullptr, 0.85f);
+    DrawText(HUD, FString::Join(Items, TEXT(" / ")).Left(40), Muted, X + 8, Y + 65, 0.85f);
 }
 
 bool UShopPanel::IsOverButton(FVector2D ViewportPosition) const
 {
     if (WidgetScreen) return WidgetScreen->BlocksWorldInput(ViewportPosition);
     if (!DraggingItem.IsNone()) return true;
-    const FVector2D LocalPosition = ViewportPosition - ViewOrigin;
+    const FVector2D LocalPosition = ToCanvasUnits(ViewportPosition);
     return Buttons.ContainsByPredicate([LocalPosition](const FButton& Button)
     {
-        const FVector2D Offset = LocalPosition - Button.Position;
-        return Offset.X >= 0 && Offset.Y >= 0 && Offset.X < Button.Size.X && Offset.Y < Button.Size.Y;
+        return Button.Contains(LocalPosition);
     });
 }
 
@@ -477,13 +492,12 @@ void UShopPanel::HandleInput(const FInputKeyEventArgs& Event)
         FGuid Target;
         if (PC && PC->GetMousePosition(MouseX, MouseY))
         {
-            const FVector2D LocalMouse = FVector2D(MouseX, MouseY) - ViewOrigin;
+            const FVector2D LocalMouse = ToCanvasUnits(FVector2D(MouseX, MouseY));
             const bool OverUI = Buttons.ContainsByPredicate([LocalMouse](const FButton& Button)
             {
-                const FVector2D Offset = LocalMouse - Button.Position;
-                return Offset.X >= 0 && Offset.Y >= 0 && Offset.X < Button.Size.X && Offset.Y < Button.Size.Y;
+                return Button.Contains(LocalMouse);
             });
-            if (FVector2D::Distance(ItemDragStart, FVector2D(MouseX, MouseY)) < 4.f)
+            if (FVector2D::Distance(ItemDragStart, FVector2D(MouseX, MouseY)) < 4.f * CanvasScale)
                 Target = Selected;
             else if (!OverUI)
             {
@@ -521,12 +535,12 @@ void UShopPanel::HandleInput(const FInputKeyEventArgs& Event)
     float X, Y;
     APlayerController* PC = HUD->GetOwningPlayerController();
     if (!PC || !PC->GetMousePosition(X, Y)) return;
+    const FVector2D LocalMouse = ToCanvasUnits(FVector2D(X, Y));
     for (int32 Index = Buttons.Num() - 1; Index >= 0; --Index)
     {
         const FButton Button = Buttons[Index];
 
-        const FVector2D Offset = FVector2D(X, Y) - ViewOrigin - Button.Position;
-        if (Offset.X < 0 || Offset.Y < 0 || Offset.X >= Button.Size.X || Offset.Y >= Button.Size.Y) continue;
+        if (!Button.Contains(LocalMouse)) continue;
         if (Button.Action == EAction::Equip && Button.bEnabled)
         {
             DraggingItem = Button.Item;

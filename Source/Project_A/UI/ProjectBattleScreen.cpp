@@ -105,6 +105,7 @@ TSharedRef<SWidget> UProjectBattleScreen::RebuildWidget()
     auto& Tree = *WidgetTree;
     auto* Canvas = Tree.ConstructWidget<UCanvasPanel>();
     Canvas->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+    Canvas->SetClipping(EWidgetClipping::ClipToBounds);
     SetVisibility(ESlateVisibility::SelfHitTestInvisible);
     Tree.RootWidget = Canvas;
 
@@ -241,14 +242,11 @@ void UProjectBattleScreen::NativeTick(const FGeometry& Geometry, float DeltaTime
     AttachTransactions(IsValid(Manager) && Manager->IsConfigured() ? Manager : nullptr);
 
     const FShopMatchState Match = Mode->GetShopMatchState_Implementation();
-    const bool bSmall = Geometry.GetLocalSize().X < 940.f;
     if (bItemDragging && !Match.CanManageBoard()) UWidgetBlueprintLibrary::CancelDragDrop();
-    if (bSmall != bCompact || Match.Phase != DisplayedPhase)
+    if (Match.Phase != DisplayedPhase)
     {
-        bCompact = bSmall;
-        if (Match.Phase != DisplayedPhase) Report(ETransactionResult::Success);
+        Report(ETransactionResult::Success);
         DisplayedPhase = Match.Phase;
-        MarkDirty();
     }
     const FGuid Selection = FindSelectedUnit();
     if (Selection != RenderedUnit)
@@ -320,7 +318,7 @@ void UProjectBattleScreen::RefreshShop(const FShopMatchState& Match)
         });
         Button->SetIsEnabled(bAvailable && Match.CanTrade() && Shop.GetGold() >= Offer.Cost);
         auto* Body = WidgetTree->ConstructWidget<UVerticalBox>();
-        auto* Name = UProjectUITheme::Label(*WidgetTree, bAvailable ? UnitName(Shop, Offer.UnitId) : FText::GetEmpty(), bCompact ? 12 : 17,
+        auto* Name = UProjectUITheme::Label(*WidgetTree, bAvailable ? UnitName(Shop, Offer.UnitId) : FText::GetEmpty(), 17,
             UProjectUITheme::Text, true);
         Name->SetJustification(ETextJustify::Center);
         Name->SetTextOverflowPolicy(ETextOverflowPolicy::Ellipsis);
@@ -329,12 +327,12 @@ void UProjectBattleScreen::RefreshShop(const FShopMatchState& Match)
         {
             const int32 Cost = UnitCost(*Transactions, Offer.UnitId, Offer.Cost);
             auto* Price = UProjectUITheme::Label(*WidgetTree,
-                FText::Format(LOCTEXT("OfferCost", "{0}코스트   ·   {1}G"), Cost, Offer.Cost), bCompact ? 10 : 12, UProjectUITheme::CostColor(Cost));
+                FText::Format(LOCTEXT("OfferCost", "{0}코스트   ·   {1}G"), Cost, Offer.Cost), 12, UProjectUITheme::CostColor(Cost));
             Price->SetJustification(ETextJustify::Center);
             Stack(*Body, Price, 4.f);
         }
         Button->SetBody(Body);
-        Row(*Offers, Sized(*WidgetTree, Button, bCompact ? 90.f : 131.f, bCompact ? 58.f : 78.f));
+        Row(*Offers, Sized(*WidgetTree, Button, 131.f, 78.f));
     }
 }
 
@@ -394,7 +392,7 @@ void UProjectBattleScreen::RefreshRewards(const FShopMatchState& Match)
             auto* IconSlot = Body->AddChildToVerticalBox(Sized(*WidgetTree, Image, 22, 22));
             IconSlot->SetHorizontalAlignment(HAlign_Center);
         }
-        auto* Name = UProjectUITheme::Label(*WidgetTree, Label, bCompact ? 12 : 16,
+        auto* Name = UProjectUITheme::Label(*WidgetTree, Label, 16,
             Cost > 0 ? UProjectUITheme::CostColor(Cost) : UProjectUITheme::Text, true);
         Name->SetAutoWrapText(true);
         Name->SetJustification(ETextJustify::Center);
@@ -407,7 +405,7 @@ void UProjectBattleScreen::RefreshRewards(const FShopMatchState& Match)
             Stack(*Body, Stars, 3);
         }
         Button->SetBody(Body);
-        Row(*Rewards, Sized(*WidgetTree, Button, bCompact ? 110.f : 146.f, 82.f));
+        Row(*Rewards, Sized(*WidgetTree, Button, 146.f, 82.f));
     }
 }
 
@@ -532,7 +530,7 @@ void UProjectBattleScreen::UpdateProfile(const FGeometry& Geometry, bool bRefres
     }
 
     FVector2D Absolute;
-    USlateBlueprintLibrary::ScreenToWidgetAbsolute(this, FVector2D(X, Y), Absolute, true);
+    USlateBlueprintLibrary::ScreenToWidgetAbsolute(this, FVector2D(X, Y), Absolute);
     const FVector2D Local = Geometry.AbsoluteToLocal(Absolute);
     const FVector2D Size = ProfileFrame->GetDesiredSize();
     const FVector2D ViewSize = Geometry.GetLocalSize();
@@ -573,7 +571,7 @@ bool UProjectBattleScreen::IsInsidePanel(FVector2D Absolute) const
 bool UProjectBattleScreen::BlocksWorldInput(FVector2D ViewportPixel) const
 {
     FVector2D Absolute = FVector2D::ZeroVector;
-    USlateBlueprintLibrary::ScreenToWidgetAbsolute(this, ViewportPixel, Absolute, true);
+    USlateBlueprintLibrary::ScreenToWidgetAbsolute(this, ViewportPixel, Absolute);
     return bItemDragging || IsInsidePanel(Absolute);
 }
 
