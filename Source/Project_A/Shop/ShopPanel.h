@@ -10,6 +10,7 @@ class AShopTransactionManager;
 class AHUD;
 class UCanvas;
 class UGameViewportClient;
+class UProjectBattleScreen;
 struct FItemDefinition;
 struct FInputKeyEventArgs;
 
@@ -40,6 +41,10 @@ private:
         bool bEnabled = true;
     };
 
+    UPROPERTY(Transient)
+    TObjectPtr<UProjectBattleScreen> WidgetScreen;
+
+    bool bUseWidgetScreen = false;
     TWeakObjectPtr<AShopTransactionManager> Transactions;
     TWeakObjectPtr<UGameViewportClient> Viewport;
     TWeakObjectPtr<AHUD> ActiveHUD;
@@ -57,6 +62,7 @@ private:
     FVector2D ItemDragStart = FVector2D::ZeroVector;
 
     void ClearBindings();
+    void DrawWidgetScreen(AHUD& HUD);
     void Draw(AHUD* HUD, UCanvas* Canvas);
     void DrawShop(AHUD& HUD, const AShopManager& Manager, const FShopMatchState& Match);
     void DrawItemsAndUnitActions(AHUD& HUD, const AShopTransactionManager& Manager);

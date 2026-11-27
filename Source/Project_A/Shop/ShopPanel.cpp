@@ -1,5 +1,7 @@
 #include "ShopPanel.h"
 #include "RosterManager.h"
+#include "../UI/ProjectBattleScreen.h"
+#include "UObject/UnrealType.h"
 #include "ShopManager.h"
 #include "ItemManager.h"
 #include "ShopTransactionManager.h"
@@ -60,6 +62,7 @@ bool UShopPanel::DoesSupportWorldType(EWorldType::Type Type) const
 void UShopPanel::OnWorldBeginPlay(UWorld& InWorld)
 {
     Super::OnWorldBeginPlay(InWorld);
+    bUseWidgetScreen = UWorld::RemovePIEPrefix(InWorld.GetPackage()->GetName()) == TEXT("/Game/UITestMap/MainMap_Intergration1");
     if (InWorld.GetNetMode() != NM_DedicatedServer)
         DrawHandle = AHUD::OnHUDPostRender.AddUObject(this, &UShopPanel::Draw);
 }
@@ -72,6 +75,8 @@ void UShopPanel::Deinitialize()
 void UShopPanel::ClearBindings()
 {
     CancelItemDrag();
+    if (WidgetScreen) WidgetScreen->RemoveFromParent();
+    WidgetScreen = nullptr;
     AHUD::OnHUDPostRender.Remove(DrawHandle);
     if (Viewport.IsValid()) Viewport->OnInputKey().Remove(InputHandle);
     DrawHandle.Reset();
@@ -145,6 +150,11 @@ void UShopPanel::AddButton(AHUD& HUD, const FString& Label, const FButton& Butto
 void UShopPanel::Draw(AHUD* HUD, UCanvas* Canvas)
 {
     if (!HUD || !Canvas || HUD->GetWorld() != GetWorld()) return;
+    if (bUseWidgetScreen)
+    {
+        DrawWidgetScreen(*HUD);
+        return;
+    }
     AShopTransactionManager* Manager = Transactions.Get();
     if (!Manager || !Manager->IsConfigured() || Manager->GetMatchState().Phase == EShopPhase::Inactive)
     {
@@ -216,6 +226,34 @@ void UShopPanel::Draw(AHUD* HUD, UCanvas* Canvas)
         if (IsOverButton(FVector2D(X, Y)) || HUD->GetHitBoxAtCoordinates(FVector2D(X, Y), true)) return;
         const FGuid Hovered = Manager->Roster->GetHoveredUnit();
         if (Hovered.IsValid()) DrawProfile(*HUD, *Manager, Hovered, LocalMouse + FVector2D(12, -120));
+    }
+}
+
+void UShopPanel::DrawWidgetScreen(AHUD& HUD)
+{
+    APlayerController* Player = HUD.GetOwningPlayerController();
+    if (!Player || !Player->IsLocalController()) return;
+    if (!WidgetScreen)
+    {
+        WidgetScreen = CreateWidget<UProjectBattleScreen>(Player);
+        if (!WidgetScreen || !WidgetScreen->AddToPlayerScreen(20))
+        {
+            WidgetScreen = nullptr;
+            return;
+        }
+        Viewport = GetWorld()->GetGameViewport();
+        if (Viewport.IsValid()) InputHandle = Viewport->OnInputKey().AddUObject(this, &UShopPanel::HandleInput);
+        ActiveHUD = &HUD;
+    }
+
+    // The shared GameMode Blueprint still creates its battle widget on phase changes.
+    // Hide that instance only in the UI test world.
+    if (auto* Mode = GetWorld()->GetAuthGameMode<AAutoBattleGameMode>())
+    {
+        const auto* Property = FindFProperty<FObjectPropertyBase>(Mode->GetClass(), TEXT("BattleHUD"));
+        auto* Legacy = Property ? Cast<UUserWidget>(Property->GetObjectPropertyValue_InContainer(Mode)) : nullptr;
+        if (Legacy && Legacy->GetVisibility() != ESlateVisibility::Collapsed)
+            Legacy->SetVisibility(ESlateVisibility::Collapsed);
     }
 }
 
@@ -402,6 +440,7 @@ void UShopPanel::DrawProfile(AHUD& HUD, const AShopTransactionManager& Manager, 
 
 bool UShopPanel::IsOverButton(FVector2D ViewportPosition) const
 {
+    if (WidgetScreen) return WidgetScreen->BlocksWorldInput(ViewportPosition);
     if (!DraggingItem.IsNone()) return true;
     const FVector2D LocalPosition = ViewportPosition - ViewOrigin;
     return Buttons.ContainsByPredicate([LocalPosition](const FButton& Button)
@@ -413,6 +452,20 @@ bool UShopPanel::IsOverButton(FVector2D ViewportPosition) const
 
 void UShopPanel::HandleInput(const FInputKeyEventArgs& Event)
 {
+    if (WidgetScreen)
+    {
+        const bool bCancel = Event.Key == EKeys::RightMouseButton;
+        if ((Event.Event == IE_Pressed || Event.Event == IE_DoubleClick)
+            && (bCancel || Event.Key == EKeys::LeftMouseButton))
+        {
+            float X = 0.f;
+            float Y = 0.f;
+            const APlayerController* Player = WidgetScreen->GetOwningPlayer();
+            if (bCancel || (Player && Player->GetMousePosition(X, Y)))
+                WidgetScreen->OnWorldPointerPressed(FVector2D(X, Y), bCancel);
+        }
+        return;
+    }
     AShopTransactionManager* Manager = Transactions.Get();
     AHUD* HUD = ActiveHUD.Get();
     if (!Manager || !Manager->IsConfigured() || !HUD) return;
