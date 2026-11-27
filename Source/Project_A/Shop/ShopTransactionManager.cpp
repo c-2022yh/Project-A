@@ -344,7 +344,7 @@ ETransactionResult AShopTransactionManager::AddUnit(const FShopOffer& Offer, int
     TArray<FRosterUnitChange> Changes;
     TArray<ARosterManager::FMerge> Merges;
     const auto Plan = Roster->PlanAdmission(Offer, Stars, Roster->GetBench()->FindFreeSlot(),
-        Match.Phase == EShopPhase::Preparation, Changes, Merges);
+        Match.Phase, Changes, Merges);
     if (Plan != ETransactionResult::Success) return Plan;
     return ApplyMerges(Changes, Merges, Match) ? ETransactionResult::Success : ETransactionResult::ChangeRejected;
 }

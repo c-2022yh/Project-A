@@ -118,14 +118,16 @@ void ARosterManager::Commit(const TArray<FRosterUnitChange>& Changes)
 }
 
 ETransactionResult ARosterManager::PlanAdmission(const FShopOffer& Offer, int32 Stars, FUnitPosition BenchSlot,
-    bool bMergeNow, TArray<FRosterUnitChange>& Changes, TArray<FMerge>& Merges) const
+    EShopPhase Phase, TArray<FRosterUnitChange>& Changes, TArray<FMerge>& Merges) const
 {
     if (Offer.UnitId.IsNone() || Offer.Cost <= 0 || Stars < 1 || Stars > 2)
         return ETransactionResult::InvalidSelection;
 
     const FRosterUnit Incoming { FGuid::NewGuid(), Offer.UnitId, Stars, Offer.Cost };
     FMerge Merge;
-    if (bMergeNow && Stars == 1 && PlanMerge(Offer.UnitId, &Incoming, Changes, Merge))
+    const bool bBenchOnly = Phase == EShopPhase::Combat;
+    if (Stars == 1 && (bBenchOnly || Phase == EShopPhase::Preparation)
+        && PlanMerge(Offer.UnitId, &Incoming, bBenchOnly, Changes, Merge))
     {
         Merges.Add(MoveTemp(Merge));
         return ETransactionResult::Success;
@@ -135,14 +137,16 @@ ETransactionResult ARosterManager::PlanAdmission(const FShopOffer& Offer, int32 
     return ETransactionResult::Success;
 }
 
-bool ARosterManager::PlanMerge(FName UnitId, const FRosterUnit* Incoming,
+bool ARosterManager::PlanMerge(FName UnitId, const FRosterUnit* Incoming, bool bBenchOnly,
     TArray<FRosterUnitChange>& Changes, FMerge& Merge) const
 {
     TArray<const FRosterUnit*, TInlineAllocator<3>> Materials;
     const int32 Required = Incoming ? 2 : 3;
     for (const FRosterUnit& Unit : Units)
     {
-        if (Unit.UnitId != UnitId || Unit.Stars != 1 || GetPosition(Unit.Id).Location == EUnitLocation::None) continue;
+        if (Unit.UnitId != UnitId || Unit.Stars != 1) continue;
+        const EUnitLocation Location = GetPosition(Unit.Id).Location;
+        if (Location == EUnitLocation::None || (bBenchOnly && Location != EUnitLocation::Bench)) continue;
         if (Changes.ContainsByPredicate([&Unit](const FRosterUnitChange& Change) { return Change.Unit.Id == Unit.Id; }))
             continue;
         Materials.Add(&Unit);
@@ -183,7 +187,7 @@ void ARosterManager::PlanPendingMerges(TArray<FRosterUnitChange>& Changes, TArra
     for (FName UnitId : UnitTypes)
     {
         FMerge Merge;
-        while (PlanMerge(UnitId, nullptr, Changes, Merge))
+        while (PlanMerge(UnitId, nullptr, false, Changes, Merge))
         {
             Merges.Add(MoveTemp(Merge));
             Merge = FMerge();

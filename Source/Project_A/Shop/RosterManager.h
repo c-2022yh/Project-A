@@ -83,9 +83,10 @@ private:
     bool Apply(const TArray<FRosterUnitChange>& Changes, EShopPhase Phase, int32 Limit) const;
     void Commit(const TArray<FRosterUnitChange>& Changes);
     ETransactionResult PlanAdmission(const FShopOffer& Offer, int32 Stars, FUnitPosition BenchSlot,
-        bool bMergeNow, TArray<FRosterUnitChange>& Changes, TArray<FMerge>& Merges) const;
+        EShopPhase Phase, TArray<FRosterUnitChange>& Changes, TArray<FMerge>& Merges) const;
     void PlanPendingMerges(TArray<FRosterUnitChange>& Changes, TArray<FMerge>& Merges) const;
-    bool PlanMerge(FName UnitId, const FRosterUnit* Incoming, TArray<FRosterUnitChange>& Changes, FMerge& Merge) const;
+    bool PlanMerge(FName UnitId, const FRosterUnit* Incoming, bool bBenchOnly,
+        TArray<FRosterUnitChange>& Changes, FMerge& Merge) const;
 
     void NotifyChanged();
 };

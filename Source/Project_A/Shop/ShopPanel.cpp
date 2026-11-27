@@ -10,10 +10,13 @@
 #include "SceneView.h"
 #include "Engine/GameViewportClient.h"
 #include "Engine/UserInterfaceSettings.h"
+#include "Framework/Application/IInputProcessor.h"
+#include "Framework/Application/SlateApplication.h"
 #include "GameFramework/HUD.h"
 #include "GameFramework/PlayerController.h"
 #include "EngineUtils.h"
 #include "InputKeyEventArgs.h"
+#include "Widgets/SViewport.h"
 #include "../AutoBattleGameMode.h"
 #include "../BattleUnitBase.h"
 #include "../BoardTile.h"
@@ -21,6 +24,30 @@
 
 namespace
 {
+class FBattlePauseInput final : public IInputProcessor
+{
+public:
+    FBattlePauseInput(UProjectBattleScreen& InScreen, const TSharedRef<SViewport>& InViewport)
+        : Screen(&InScreen), Viewport(InViewport) {}
+
+    void Tick(float, FSlateApplication&, TSharedRef<ICursor>) override {}
+
+    bool HandleKeyDownEvent(FSlateApplication&, const FKeyEvent& Event) override
+    {
+        if (Event.GetKey() != EKeys::Escape) return false;
+        const auto GameViewport = Viewport.Pin();
+        if (!GameViewport || !Screen.IsValid()
+            || (!GameViewport->HasKeyboardFocus() && !GameViewport->HasFocusedDescendants())) return false;
+
+        if (!Event.IsRepeat()) Screen->TogglePauseMenu();
+        return true;
+    }
+
+private:
+    TWeakObjectPtr<UProjectBattleScreen> Screen;
+    TWeakPtr<SViewport> Viewport;
+};
+
 const FLinearColor PanelBackground(0.025f, 0.035f, 0.055f, 0.96f);
 const FLinearColor ButtonBackground(0.10f, 0.17f, 0.25f, 1);
 const FLinearColor SelectedBackground(0.13f, 0.30f, 0.34f, 1);
@@ -76,6 +103,8 @@ void UShopPanel::Deinitialize()
 void UShopPanel::ClearBindings()
 {
     CancelItemDrag();
+    if (PauseInput && FSlateApplication::IsInitialized()) FSlateApplication::Get().UnregisterInputPreProcessor(PauseInput);
+    PauseInput.Reset();
     if (WidgetScreen) WidgetScreen->RemoveFromParent();
     WidgetScreen = nullptr;
     AHUD::OnHUDPostRender.Remove(DrawHandle);
@@ -258,7 +287,16 @@ void UShopPanel::DrawWidgetScreen(AHUD& HUD)
             return;
         }
         Viewport = GetWorld()->GetGameViewport();
-        if (Viewport.IsValid()) InputHandle = Viewport->OnInputKey().AddUObject(this, &UShopPanel::HandleInput);
+        if (Viewport.IsValid())
+        {
+            InputHandle = Viewport->OnInputKey().AddUObject(this, &UShopPanel::HandleInput);
+            if (const auto GameViewport = Viewport->GetGameViewportWidget(); GameViewport && FSlateApplication::IsInitialized())
+            {
+                PauseInput = MakeShared<FBattlePauseInput>(*WidgetScreen, GameViewport.ToSharedRef());
+                // Capture Escape in the focused test viewport before the editor's Stop Play shortcut.
+                FSlateApplication::Get().RegisterInputPreProcessor(PauseInput, EInputPreProcessorType::PreEditor);
+            }
+        }
         ActiveHUD = &HUD;
     }
 

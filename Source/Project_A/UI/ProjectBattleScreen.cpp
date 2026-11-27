@@ -28,6 +28,8 @@
 #include "Components/VerticalBoxSlot.h"
 #include "Engine/Texture2D.h"
 #include "Engine/World.h"
+#include "Kismet/GameplayStatics.h"
+#include "Kismet/KismetSystemLibrary.h"
 
 #define LOCTEXT_NAMESPACE "ProjectBattleScreen"
 
@@ -119,7 +121,10 @@ TSharedRef<SWidget> UProjectBattleScreen::RebuildWidget()
     Row(*Status, Round);
     StartCombat = MakeButton(LOCTEXT("Start", "전투 시작"), [this]
     {
-        if (auto* PC = Cast<AAutoBattlePlayerController>(GetOwningPlayer())) PC->RequestStartCombat();
+        if (!IsValid(Transactions) || bItemDragging) return;
+        const auto* Placement = Cast<UMainMapShopPlacement>(Transactions->Roster->Placement.GetObject());
+        auto* PC = Cast<AAutoBattlePlayerController>(GetOwningPlayer());
+        if (Placement && PC) Placement->RequestCombatStart(*PC);
     });
     Row(*Status, Sized(Tree, StartCombat, 128.f, 38.f));
     StatusFrame = UProjectUITheme::Frame(Tree, Status, FMargin(10.f, 6.f));
@@ -180,18 +185,6 @@ TSharedRef<SWidget> UProjectBattleScreen::RebuildWidget()
     ProfilePosition = UProjectUITheme::Pin(*Canvas, *ProfileFrame, FVector2D::ZeroVector, FVector2D(0, 1), FVector2D::ZeroVector);
     Show(ProfileFrame, false);
 
-    auto* ResultContent = Tree.ConstructWidget<UVerticalBox>();
-    Result = UProjectUITheme::Label(Tree, {}, 28, UProjectUITheme::Gold, true);
-    Result->SetJustification(ETextJustify::Center);
-    Stack(*ResultContent, Result, 0);
-    Restart = MakeButton(LOCTEXT("Restart", "다시 시작"), [this]
-    {
-        if (auto* PC = Cast<AAutoBattlePlayerController>(GetOwningPlayer())) PC->RequestRestart();
-    });
-    Stack(*ResultContent, Sized(Tree, Restart, 190.f, 43.f), 14.f);
-    ResultFrame = UProjectUITheme::Frame(Tree, ResultContent, FMargin(28.f, 18.f));
-    UProjectUITheme::Pin(*Canvas, *ResultFrame, FVector2D(0.5, 0.42), FVector2D(0.5, 0.5), FVector2D::ZeroVector);
-
     Feedback = UProjectUITheme::Label(Tree, {}, 15, UProjectUITheme::Text);
     Feedback->SetJustification(ETextJustify::Center);
     Feedback->SetWrapTextAt(420.f);
@@ -199,7 +192,7 @@ TSharedRef<SWidget> UProjectBattleScreen::RebuildWidget()
     FeedbackFrame->SetVisibility(ESlateVisibility::Collapsed);
     UProjectUITheme::Pin(*Canvas, *FeedbackFrame, FVector2D(0.5, 0.64), FVector2D(0.5, 0.5), FVector2D::ZeroVector);
 
-    for (UWidget* Frame : { ShopFrame.Get(), RewardFrame.Get(), InventoryFrame.Get(), UnitFrame.Get(), StatusFrame.Get(), ResultFrame.Get() })
+    for (UWidget* Frame : { ShopFrame.Get(), RewardFrame.Get(), InventoryFrame.Get(), UnitFrame.Get(), StatusFrame.Get() })
         Show(Frame, false);
     return Super::RebuildWidget();
 }
@@ -230,6 +223,9 @@ void UProjectBattleScreen::NativeDestruct()
 {
     SetItemDragging(false);
     AttachTransactions(nullptr);
+    if (GetWorld() && !GetWorld()->bIsTearingDown) ClosePauseMenu();
+    if (PauseMenu) PauseMenu->RemoveFromParent();
+    if (GameResultScreen) GameResultScreen->RemoveFromParent();
     Super::NativeDestruct();
 }
 
@@ -266,21 +262,111 @@ void UProjectBattleScreen::NativeTick(const FGeometry& Geometry, float DeltaTime
         ? FText::Format(LOCTEXT("Deployment", "배치 {0}/{1}"), Deployed, Match.DeploymentLimit)
         : FText::Format(LOCTEXT("Round", "라운드 {0}   ·   배치 {1}/{2}"), Match.Round, Deployed, Match.DeploymentLimit));
     const auto* PC = Cast<AAutoBattlePlayerController>(GetOwningPlayer());
-    StartCombat->SetIsEnabled(Mode->bEncounterReady && Mode->bPreparationActive && Deployed > 0
-        && Deployed <= Match.DeploymentLimit && !bItemDragging && PC && !PC->IsUnitDragActive());
+    const auto* Placement = Transactions ? Cast<UMainMapShopPlacement>(Transactions->Roster->Placement.GetObject()) : nullptr;
+    StartCombat->SetIsEnabled(Placement && PC && !bItemDragging && Placement->CanRequestCombatStart(*PC));
     Show(StartCombat->GetParent(), Match.Phase == EShopPhase::Preparation);
     Show(StatusFrame, Match.Phase != EShopPhase::Inactive && Match.Phase != EShopPhase::Finished);
-    const bool bFinished = Mode->bManagedDefeated || Mode->bManagedTestFinished || Match.Phase == EShopPhase::Finished;
-    Show(ResultFrame, !Mode->bEnableMainMapRoundTest && (bFinished || Mode->bShowingRoundClear));
-    if (ResultFrame->IsVisible())
-    {
-        Result->SetText(bFinished
-            ? ((Mode->bManagedDefeated || Mode->CurrentPhase == EGamePhase::GameOver)
-                ? LOCTEXT("Defeat", "패배") : LOCTEXT("Victory", "승리"))
-            : LOCTEXT("ClearBanner", "라운드 클리어"));
-        Show(Restart, bFinished && !Mode->bShowingRoundClear);
-    }
     UpdateProfile(Geometry, bRefresh);
+}
+
+FProjectMenuActions UProjectBattleScreen::MenuActions(void (UProjectBattleScreen::*Restart)())
+{
+    return { FSimpleDelegate::CreateUObject(this, Restart),
+        FSimpleDelegate::CreateUObject(this, &UProjectBattleScreen::ReturnToTitle),
+        FSimpleDelegate::CreateUObject(this, &UProjectBattleScreen::QuitGame) };
+}
+
+void UProjectBattleScreen::ShowGameResult(EProjectGameResult Outcome, int32 RoundNumber, int32 ClearedRounds, int32 TotalRounds)
+{
+    auto* Player = GetOwningPlayer();
+    if (!Player || !Theme) return;
+    if (!GameResultScreen)
+    {
+        GameResultScreen = CreateWidget<UGameResultScreen>(Player);
+        if (!GameResultScreen) return;
+        GameResultScreen->Configure(*Theme, MenuActions(&UProjectBattleScreen::RestartFromResult));
+    }
+    if (!GameResultScreen->IsInViewport()) GameResultScreen->AddToViewport(110);
+    GameResultScreen->Present(Outcome, RoundNumber, ClearedRounds, TotalRounds);
+}
+
+void UProjectBattleScreen::HideGameResult()
+{
+    Show(GameResultScreen, false);
+}
+
+void UProjectBattleScreen::TogglePauseMenu()
+{
+    if (bPausedByMenu)
+    {
+        ResumeGame();
+        return;
+    }
+
+    auto* Player = Cast<AAutoBattlePlayerController>(GetOwningPlayer());
+    if (!Player || !Theme || Player->IsPaused()) return;
+    if (!PauseMenu)
+    {
+        PauseMenu = CreateWidget<UPauseMenu>(Player);
+        if (!PauseMenu) return;
+        PauseMenu->Configure(*Theme, MenuActions(&UProjectBattleScreen::RestartCurrentMatch),
+            FSimpleDelegate::CreateUObject(this, &UProjectBattleScreen::ResumeGame));
+        Show(PauseMenu, false);
+    }
+    if (!PauseMenu->IsInViewport()) PauseMenu->AddToViewport(120);
+    if (!PauseMenu->IsInViewport() || !Player->SetPause(true)) return;
+
+    bPausedByMenu = true;
+    bMouseCursorBeforePause = Player->bShowMouseCursor;
+    Player->CancelUnitDrag();
+    if (bItemDragging) UWidgetBlueprintLibrary::CancelDragDrop();
+    Show(PauseMenu, true);
+    FInputModeUIOnly Input;
+    Input.SetWidgetToFocus(PauseMenu->TakeWidget());
+    Player->SetInputMode(Input);
+    Player->bShowMouseCursor = true;
+}
+
+bool UProjectBattleScreen::ClosePauseMenu()
+{
+    if (!bPausedByMenu) return true;
+    auto* Player = GetOwningPlayer();
+    if (!Player || (Player->IsPaused() && !Player->SetPause(false))) return false;
+
+    bPausedByMenu = false;
+    Show(PauseMenu, false);
+    FInputModeGameAndUI Input;
+    Input.SetHideCursorDuringCapture(false);
+    Player->SetInputMode(Input);
+    UWidgetBlueprintLibrary::SetFocusToGameViewport();
+    Player->bShowMouseCursor = bMouseCursorBeforePause;
+    return true;
+}
+
+void UProjectBattleScreen::ResumeGame()
+{
+    ClosePauseMenu();
+}
+
+void UProjectBattleScreen::RestartFromResult()
+{
+    if (auto* Player = Cast<AAutoBattlePlayerController>(GetOwningPlayer())) Player->RequestRestart();
+}
+
+void UProjectBattleScreen::RestartCurrentMatch()
+{
+    if (ClosePauseMenu())
+        UGameplayStatics::OpenLevel(this, FName(*UWorld::RemovePIEPrefix(GetWorld()->GetPackage()->GetName())));
+}
+
+void UProjectBattleScreen::ReturnToTitle()
+{
+    if (ClosePauseMenu()) UGameplayStatics::OpenLevel(this, TEXT("/Game/UITestMap/TitleMap"));
+}
+
+void UProjectBattleScreen::QuitGame()
+{
+    if (ClosePauseMenu()) UKismetSystemLibrary::QuitGame(this, GetOwningPlayer(), EQuitPreference::Quit, false);
 }
 
 void UProjectBattleScreen::Refresh(const FShopMatchState& Match)
@@ -563,13 +649,14 @@ FGuid UProjectBattleScreen::FindSelectedUnit() const
 
 bool UProjectBattleScreen::IsInsidePanel(FVector2D Absolute) const
 {
-    for (const UWidget* Panel : { ShopFrame.Get(), RewardFrame.Get(), InventoryFrame.Get(), UnitFrame.Get(), StatusFrame.Get(), ResultFrame.Get() })
+    for (const UWidget* Panel : { ShopFrame.Get(), RewardFrame.Get(), InventoryFrame.Get(), UnitFrame.Get(), StatusFrame.Get() })
         if (ContainsPoint(Panel, Absolute)) return true;
     return false;
 }
 
 bool UProjectBattleScreen::BlocksWorldInput(FVector2D ViewportPixel) const
 {
+    if (bPausedByMenu || (GameResultScreen && GameResultScreen->IsVisible())) return true;
     FVector2D Absolute = FVector2D::ZeroVector;
     USlateBlueprintLibrary::ScreenToWidgetAbsolute(this, ViewportPixel, Absolute);
     return bItemDragging || IsInsidePanel(Absolute);

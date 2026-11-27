@@ -152,7 +152,7 @@ bool FShopTransactionsTest::RunTest(const FString& Parameters)
     TestEqual(TEXT("Equip blocked in combat"), Transactions->RequestEquip(Kept, ItemId), ETransactionResult::WrongPhase);
     TestEqual(TEXT("Combat buy 1"), Transactions->RequestBuy(1, Revision), ETransactionResult::Success);
     TestEqual(TEXT("Combat buy 2"), Transactions->RequestBuy(2, Revision), ETransactionResult::Success);
-    TestEqual(TEXT("Merge waits for preparation"), Roster->GetUnits().Num(), 3);
+    TestEqual(TEXT("Merge that needs a deployed unit waits for preparation"), Roster->GetUnits().Num(), 3);
     TestEqual(TEXT("Lock remaining stock"), Transactions->RequestShopLock(true), ETransactionResult::Success);
     Mode->Match.Phase = EShopPhase::Settlement;
     TestEqual(TEXT("No reroll in settlement"), Transactions->RequestReroll(), ETransactionResult::WrongPhase);
@@ -222,16 +222,24 @@ bool FShopTransactionsTest::RunTest(const FString& Parameters)
     TestTrue(TEXT("Zero gold preparation"), Prepare(1, 2));
     TestEqual(TEXT("Insufficient gold"), Transactions->RequestBuy(0, Shop->GetShopRevision()), ETransactionResult::InsufficientGold);
     TestEqual(TEXT("Insufficient gold preserves offer"), Shop->GetOffers()[0].UnitId, UnitType);
-    if (!TestTrue(TEXT("Fresh match for full bench"), StartMatch(20))) return false;
+    if (!TestTrue(TEXT("Fresh match for initial triples"), StartMatch(20))) return false;
     Bench = Roster->GetBench();
     for (int32 Slot = 0; Slot < Bench->GetSlotCount(); ++Slot)
         TestEqual(TEXT("Starting unit on bench"), Transactions->GrantStartingUnit(Slot % 2 == 0 ? UnitType : OtherType), ETransactionResult::Success);
 
     TestTrue(TEXT("Preparation processes initial triples"), Prepare(1, 2));
     TestEqual(TEXT("Two independent triples merged atomically"), Roster->GetUnits().Num(), 3);
+
+    if (!TestTrue(TEXT("Fresh match for a full bench without matching copies"), StartMatch(20))) return false;
+    Bench = Roster->GetBench();
+    for (int32 Slot = 0; Slot < Bench->GetSlotCount(); ++Slot)
+    {
+        const FName Filler(*FString::Printf(TEXT("Filler%d"), Slot));
+        Shop->Catalog.Add({ Filler, FText::FromName(Filler), 2 });
+        TestEqual(TEXT("Grant a distinct bench unit"), Transactions->GrantStartingUnit(Filler), ETransactionResult::Success);
+    }
+    if (!TestTrue(TEXT("Prepare with a full bench"), Prepare(1, 2))) return false;
     Mode->Match.Phase = EShopPhase::Combat;
-    for (int32 Slot = 0; Slot < 4; ++Slot)
-        TestEqual(TEXT("Fill bench"), Transactions->RequestBuy(Slot, Shop->GetShopRevision()), ETransactionResult::Success);
 
     TestEqual(TEXT("Bench reports full"), Bench->FindFreeSlot().Location, EUnitLocation::None);
     const FGuid First = Bench->GetOccupant(0);
@@ -242,7 +250,7 @@ bool FShopTransactionsTest::RunTest(const FString& Parameters)
     TestEqual(TEXT("Second unit moves to first slot"), Bench->GetOccupant(0), SecondUnit);
 
     const int32 FilledGold = Shop->GetGold();
-    TestEqual(TEXT("Full bench blocks purchase before pending merge"), Transactions->RequestBuy(4, Shop->GetShopRevision()), ETransactionResult::NoSpace);
+    TestEqual(TEXT("Full bench blocks a purchase without a bench merge"), Transactions->RequestBuy(4, Shop->GetShopRevision()), ETransactionResult::NoSpace);
     TestEqual(TEXT("Full bench keeps gold"), Shop->GetGold(), FilledGold);
     TestEqual(TEXT("Full bench keeps offer"), Shop->GetOffers()[4].UnitId, UnitType);
     Mode->Match.Phase = EShopPhase::Settlement;
@@ -335,6 +343,31 @@ bool FShopTransactionsTest::RunTest(const FString& Parameters)
     TestEqual(TEXT("Full bench without an immediate merge blocks purchase"), Transactions->RequestBuy(2, FullBenchRevision), ETransactionResult::NoSpace);
     TestEqual(TEXT("Blocked purchase keeps gold"), Shop->GetGold(), 18);
     TestEqual(TEXT("Blocked purchase keeps offer"), Shop->GetOffers()[2].UnitId, UnitType);
+
+    if (!TestTrue(TEXT("Fresh match for full-bench combat merge"), StartMatch(20))) return false;
+    Bench = Roster->GetBench();
+    for (int32 Slot = 0; Slot < Bench->GetSlotCount(); ++Slot)
+    {
+        const FName Id = Slot < 2 ? UnitType : FName(*FString::Printf(TEXT("CombatFiller%d"), Slot));
+        if (Slot >= 2) Shop->Catalog.Add({ Id, FText::FromName(Id), 2 });
+        TestEqual(TEXT("Grant combat fixture unit"), Transactions->GrantStartingUnit(Id), ETransactionResult::Success);
+    }
+    if (!TestTrue(TEXT("Prepare for combat merge"), Prepare(1, 2))) return false;
+    const FGuid DeployedMaterial = Bench->GetOccupant(0);
+    const FGuid WaitingMaterial = Bench->GetOccupant(1);
+    if (!TestEqual(TEXT("Deploy the first matching unit"), PlaceOnBoard(DeployedMaterial, Front), ETransactionResult::Success)) return false;
+    Mode->Match.Phase = EShopPhase::Combat;
+    const int32 CombatRevision = Shop->GetShopRevision();
+    TestEqual(TEXT("A copy joins the bench without using the deployed unit"), Transactions->RequestBuy(0, CombatRevision), ETransactionResult::Success);
+    TestEqual(TEXT("Bench is full before combat merge"), Bench->FindFreeSlot().Location, EUnitLocation::None);
+    TestEqual(TEXT("Buy and immediately merge two waiting copies"), Transactions->RequestBuy(1, CombatRevision), ETransactionResult::Success);
+    TestEqual(TEXT("Both purchases are charged once"), Shop->GetGold(), 18);
+    TestEqual(TEXT("Merged offer is cleared"), Shop->GetOffers()[1].UnitId, NAME_None);
+    TestFalse(TEXT("Combat merge frees the other slot"), Bench->GetOccupant(0).IsValid());
+    TestEqual(TEXT("Combat merge keeps its waiting slot"), Bench->GetOccupant(1), WaitingMaterial);
+    TestTrue(TEXT("Waiting unit is now two stars"), Roster->GetUnit(WaitingMaterial, Upgraded) && Upgraded.Stars == 2);
+    TestTrue(TEXT("Deployed unit remains one star"), Roster->GetUnit(DeployedMaterial, Upgraded) && Upgraded.Stars == 1);
+    TestEqual(TEXT("Deployed unit remains on its tile"), Roster->FindOccupant(Front), DeployedMaterial);
 
     // 통합 라운드 확률은 기존 Odds보다 우선하며 잠금 해제 후 리롤에도 같은 라운드를 적용한다.
     if (!TestTrue(TEXT("Fresh match for unified odds and random rewards"), StartMatch(20))) return false;

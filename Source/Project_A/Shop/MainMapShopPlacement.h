@@ -5,6 +5,7 @@
 #include "MainMapShopPlacement.generated.h"
 
 class AAutoBattleGameMode;
+class AAutoBattlePlayerController;
 class AItemManager;
 class ARosterManager;
 
@@ -16,6 +17,8 @@ class UMainMapShopPlacement : public UObject, public IUnitPlacement
 public:
     bool Initialize(AAutoBattleGameMode& InMode, ARosterManager& Roster, AItemManager& InItems);
     FGuid FindUnitId(const ABattleUnitBase* Actor) const;
+    bool CanRequestCombatStart(const AAutoBattlePlayerController& Player) const;
+    void RequestCombatStart(AAutoBattlePlayerController& Player) const;
     TArray<FName> GetActorEquipment(FGuid Id) const { return EquipmentByUnit.FindRef(Id); }
     const UDataTable* GetUnitDefinitions() const { return UnitDefinitions; }
 

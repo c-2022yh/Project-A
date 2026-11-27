@@ -14,7 +14,19 @@
 
 namespace
 {
-    const FName ShopEquipmentId(TEXT("ShopEquipment"));
+const FName ShopEquipmentId(TEXT("ShopEquipment"));
+
+bool IsFreePlayerTile(const ABoardTile* Tile)
+{
+    return IsValid(Tile) && !IsValid(Tile->OccupiedUnit) && !Tile->bBlocksMovement
+        && !Tile->IsReserved() && Tile->HasConsistentOccupancy();
+}
+
+ABattleUnitBase* GetWaitingUnit(const ABenchTile* Slot)
+{
+    auto* Unit = IsValid(Slot) ? Cast<ABattleUnitBase>(Slot->OccupiedUnit) : nullptr;
+    return IsValid(Unit) && Unit->IsAlive() && !Unit->bInCombat ? Unit : nullptr;
+}
 }
 
 bool UMainMapShopPlacement::Initialize(AAutoBattleGameMode& InMode, ARosterManager& Roster, AItemManager& InItems)
@@ -52,6 +64,59 @@ FGuid UMainMapShopPlacement::FindUnitId(const ABattleUnitBase* Actor) const
         for (const auto& Entry : Units)
             if (Entry.Value == Actor) return Entry.Key;
     return {};
+}
+
+bool UMainMapShopPlacement::CanRequestCombatStart(const AAutoBattlePlayerController& Player) const
+{
+    const auto* Board = IsValid(Mode) ? Mode->BoardManager.Get() : nullptr;
+    if (!IsValid(Board) || !Board->IsPlacementEnabled() || Player.IsUnitDragActive()
+        || Mode->GetShopMatchState_Implementation().Phase != EShopPhase::Preparation) return false;
+
+    const int32 Deployed = Mode->GetDeployedPlayerCount();
+    if (Deployed > 0) return Deployed <= Mode->MaxBoardUnits;
+    return Mode->MaxBoardUnits > 0
+        && Board->BenchSlots.ContainsByPredicate([](const ABenchTile* Slot) { return GetWaitingUnit(Slot) != nullptr; })
+        && Board->GetPlayerTiles().ContainsByPredicate(IsFreePlayerTile);
+}
+
+void UMainMapShopPlacement::RequestCombatStart(AAutoBattlePlayerController& Player) const
+{
+    if (!CanRequestCombatStart(Player)) return;
+
+    auto& Board = *Mode->BoardManager;
+    int32 OpenPositions = Mode->MaxBoardUnits - Mode->GetDeployedPlayerCount();
+    if (OpenPositions > 0)
+    {
+        TArray<ABenchTile*> WaitingSlots;
+        for (ABenchTile* Slot : Board.BenchSlots)
+            if (GetWaitingUnit(Slot)) WaitingSlots.Add(Slot);
+
+        FVector ViewLocation;
+        FRotator ViewRotation;
+        Player.GetPlayerViewPoint(ViewLocation, ViewRotation);
+        const FVector ViewRight = FRotationMatrix(ViewRotation).GetUnitAxis(EAxis::Y);
+        // Bench slot indices follow board generation order, which can be right to left on screen.
+        WaitingSlots.StableSort([&ViewRight](const ABenchTile& A, const ABenchTile& B)
+        {
+            return FVector::DotProduct(A.GetActorLocation(), ViewRight) < FVector::DotProduct(B.GetActorLocation(), ViewRight);
+        });
+
+        const auto PlayerTiles = Board.GetPlayerTiles();
+        for (const ABenchTile* Slot : WaitingSlots)
+        {
+            auto* Unit = GetWaitingUnit(Slot);
+            if (!Unit) continue;
+            for (ABoardTile* Tile : PlayerTiles)
+            {
+                if (!IsFreePlayerTile(Tile) || !Board.TryPlaceUnitOnTile(Unit, Tile)) continue;
+                --OpenPositions;
+                break;
+            }
+            if (OpenPositions == 0) break;
+        }
+    }
+
+    if (Mode->GetDeployedPlayerCount() > 0) Player.RequestStartCombat();
 }
 
 ABattleUnitBase* UMainMapShopPlacement::GetBattleUnit_Implementation(FGuid Id) const

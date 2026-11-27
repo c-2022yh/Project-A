@@ -3,6 +3,7 @@
 #include "Blueprint/DragDropOperation.h"
 #include "Blueprint/UserWidget.h"
 #include "../Shop/ShopTypes.h"
+#include "ProjectMenus.h"
 #include "ProjectBattleScreen.generated.h"
 
 class ABattleUnitBase;
@@ -34,6 +35,13 @@ class UProjectBattleScreen : public UUserWidget
 public:
     bool BlocksWorldInput(FVector2D ViewportPixel) const;
     void OnWorldPointerPressed(FVector2D ViewportPixel, bool bCancel);
+    void TogglePauseMenu();
+
+    UFUNCTION(BlueprintCallable, Category="UI|Game Result")
+    void ShowGameResult(EProjectGameResult Outcome, int32 RoundNumber, int32 ClearedRounds, int32 TotalRounds);
+
+    UFUNCTION(BlueprintCallable, Category="UI|Game Result")
+    void HideGameResult();
 
 protected:
     virtual TSharedRef<SWidget> RebuildWidget() override;
@@ -52,7 +60,8 @@ private:
     UPROPERTY(Transient) TObjectPtr<UBorder> UnitFrame;
     UPROPERTY(Transient) TObjectPtr<UBorder> ProfileFrame;
     UPROPERTY(Transient) TObjectPtr<UBorder> StatusFrame;
-    UPROPERTY(Transient) TObjectPtr<UBorder> ResultFrame;
+    UPROPERTY(Transient) TObjectPtr<UGameResultScreen> GameResultScreen;
+    UPROPERTY(Transient) TObjectPtr<UPauseMenu> PauseMenu;
     UPROPERTY(Transient) TObjectPtr<UBorder> DropSurface;
     UPROPERTY(Transient) TObjectPtr<UCanvasPanelSlot> ProfilePosition;
     UPROPERTY(Transient) TObjectPtr<UHorizontalBox> Offers;
@@ -62,13 +71,11 @@ private:
     UPROPERTY(Transient) TObjectPtr<UTextBlock> Gold;
     UPROPERTY(Transient) TObjectPtr<UTextBlock> Round;
     UPROPERTY(Transient) TObjectPtr<UTextBlock> ProfileText;
-    UPROPERTY(Transient) TObjectPtr<UTextBlock> Result;
     UPROPERTY(Transient) TObjectPtr<UTextBlock> Feedback;
     UPROPERTY(Transient) TObjectPtr<UTextBlock> RewardSummary;
     UPROPERTY(Transient) TObjectPtr<UBasicButton> Reroll;
     UPROPERTY(Transient) TObjectPtr<UBasicButton> Lock;
     UPROPERTY(Transient) TObjectPtr<UBasicButton> StartCombat;
-    UPROPERTY(Transient) TObjectPtr<UBasicButton> Restart;
 
     FGuid SelectedUnit;
     FGuid RenderedUnit;
@@ -77,6 +84,8 @@ private:
     int32 DisplayedRewardRevision = INDEX_NONE;
     bool bDirty = true;
     bool bItemDragging = false;
+    bool bPausedByMenu = false;
+    bool bMouseCursorBeforePause = false;
 
     UFUNCTION() void MarkDirty();
     void AttachTransactions(AShopTransactionManager* Manager);
@@ -91,6 +100,13 @@ private:
     FGuid FindUnitAt(FVector2D ViewportPixel) const;
     FGuid FindSelectedUnit() const;
     bool IsInsidePanel(FVector2D Absolute) const;
+    FProjectMenuActions MenuActions(void (UProjectBattleScreen::*Restart)());
+    bool ClosePauseMenu();
+    void ResumeGame();
+    void RestartFromResult();
+    void RestartCurrentMatch();
+    void ReturnToTitle();
+    void QuitGame();
     UBasicButton* MakeButton(const FText& Label, TFunction<void()> Action);
     void Report(ETransactionResult Outcome);
 };

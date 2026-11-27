@@ -8,6 +8,7 @@
 class AShopManager;
 class AShopTransactionManager;
 class AHUD;
+class IInputProcessor;
 class UCanvas;
 class UGameViewportClient;
 class UProjectBattleScreen;
@@ -25,6 +26,9 @@ public:
 
     virtual void OnWorldBeginPlay(UWorld& InWorld) override;
     bool IsOverButton(FVector2D ViewportPosition) const;
+
+    UFUNCTION(BlueprintPure, Category="UI")
+    UProjectBattleScreen* GetBattleScreen() const { return WidgetScreen; }
 
 private:
     enum class EAction : uint8 { Buy, Reroll, Lock, Equip, Unequip, Sell, Reward, InventoryPage };
@@ -56,6 +60,7 @@ private:
     TWeakObjectPtr<AHUD> ActiveHUD;
     FDelegateHandle DrawHandle;
     FDelegateHandle InputHandle;
+    TSharedPtr<IInputProcessor> PauseInput;
     TArray<FButton> Buttons;
     FVector2D ViewOrigin = FVector2D::ZeroVector;
     FVector2D ViewSize = FVector2D::ZeroVector;
